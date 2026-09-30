@@ -1,0 +1,42 @@
+{
+  "name": "temp-app",
+  "version": "0.1.0",
+  "private": true,
+  "engines": { "node": ">=24.15.0" },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "node --test tests/*.test.cjs tests/*.test.mjs",
+    "test:queue-integration": "node --env-file=.env.local scripts/test-queue-authority.mjs",
+    "test:room-api": "node --env-file=.env.local scripts/test-room-api.mjs",
+    "test:queue-realtime": "node --env-file=.env.local scripts/test-queue-realtime.mjs",
+    "lint": "eslint",
+    "catalog:sync": "node --env-file=.env.local scripts/sync-catalog.cjs"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.117.2",
+    "@types/canvas-confetti": "^1.9.0",
+    "@types/qrcode": "^1.5.6",
+    "@types/youtube": "^0.3.0",
+    "canvas-confetti": "^1.9.4",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.48.0",
+    "next": "16.3.6",
+    "qrcode": "^1.5.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "tailwind-merge": "^3.7.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "24.19.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.6",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
