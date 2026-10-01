@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "KARAOKE.HUB Vocal Cut",
+  "version": "0.3.0",
+  "description": "Local-only Vocal Cut and automatic loudness levelling for the KARAOKE.HUB player tab.",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "offscreen",
+    "storage",
+    "tabCapture"
+  ],
+  "host_permissions": [
+    "http://localhost:3000/*",
+    "https://karaoke-hub.vercel.app/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "เริ่ม/หยุด KARAOKE.HUB Vocal Cut"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost:3000/player*",
+        "https://karaoke-hub.vercel.app/player*"
+      ],
+      "js": [
+        "content-script.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

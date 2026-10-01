@@ -80,8 +80,8 @@ test('valid saved playback is restored and malformed storage is ignored', () => 
   assert.deepEqual(restoreStoredPlaybackState('{bad-json', 'not-json'), { nowPlaying: null, queue: [] });
 });
 
-test('player volume shortcuts recognize Windows key values and adjust one percent', () => {
-  const { adjustPlayerVolume, getPlayerVolumeShortcut, shouldMutePlayer } =
+test('player keyboard shortcuts recognize Windows key values and adjust one percent', () => {
+  const { adjustPlayerVolume, getPlayerVolumeShortcut, isPlayerAutoLevelShortcut, isPlayerVocalCutShortcut, shouldMutePlayer } =
     loadTypeScriptModule('src/lib/player-keyboard.ts');
   const event = (overrides = {}) => ({
     altKey: false,
@@ -99,6 +99,13 @@ test('player volume shortcuts recognize Windows key values and adjust one percen
   assert.equal(getPlayerVolumeShortcut(event({ key: '-', code: 'NumpadSubtract' })), 'decrease');
   assert.equal(getPlayerVolumeShortcut(event({ key: '+', code: 'Equal', shiftKey: false })), null);
   assert.equal(getPlayerVolumeShortcut(event({ key: '+', code: 'Equal', ctrlKey: true })), null);
+  assert.equal(isPlayerVocalCutShortcut(event({ key: '*', code: 'Digit8' })), true);
+  assert.equal(isPlayerVocalCutShortcut(event({ key: '*', code: 'NumpadMultiply', shiftKey: false })), true);
+  assert.equal(isPlayerVocalCutShortcut(event({ key: '*', code: 'Digit8', ctrlKey: true })), false);
+  assert.equal(isPlayerAutoLevelShortcut(event({ key: '/', code: 'Slash', shiftKey: false })), true);
+  assert.equal(isPlayerAutoLevelShortcut(event({ key: '/', code: 'NumpadDivide', shiftKey: false })), true);
+  assert.equal(isPlayerAutoLevelShortcut(event({ key: '?', code: 'Slash' })), false);
+  assert.equal(isPlayerAutoLevelShortcut(event({ key: '/', code: 'Slash', shiftKey: false, ctrlKey: true })), false);
 
   assert.equal(adjustPlayerVolume(85, 'increase'), 86);
   assert.equal(adjustPlayerVolume(85, 'decrease'), 84);

@@ -17,7 +17,12 @@ import { searchPlayerKaraoke, getLocalSearchPreview, isDirectVideoQuery } from '
 import { SearchBudgetNotice } from './SearchBudgetNotice';
 import { OfficialChannelBadge } from './OfficialChannelBadge';
 import { useCatalogPreview } from '@/lib/use-catalog-preview';
-import { adjustPlayerVolume, getPlayerVolumeShortcut } from '@/lib/player-keyboard';
+import {
+  adjustPlayerVolume,
+  getPlayerVolumeShortcut,
+  isPlayerAutoLevelShortcut,
+  isPlayerVocalCutShortcut,
+} from '@/lib/player-keyboard';
 import {
   rankKaraokeVideos,
   type YouTubeSearchMode,
@@ -29,6 +34,8 @@ type SearchStatus = 'idle' | 'loading' | 'success' | 'error';
 interface PlayerSearchOverlayProps {
   onQueueBrowserActiveChange: (isActive: boolean) => void;
   onRestartCurrentSong: () => void;
+  onToggleVocalCut: () => void;
+  onToggleAutoLevel: () => void;
 }
 
 const MAX_VISIBLE_RESULTS = 7;
@@ -67,6 +74,8 @@ function getVideoThumbnailUrl(video: YouTubeVideo): string {
 export function PlayerSearchOverlay({
   onQueueBrowserActiveChange,
   onRestartCurrentSong,
+  onToggleVocalCut,
+  onToggleAutoLevel,
 }: PlayerSearchOverlayProps) {
   const {
     activeRoom,
@@ -296,6 +305,9 @@ export function PlayerSearchOverlay({
     if (event.isComposing || event.defaultPrevented) return;
 
     const target = event.target;
+    const isEditableTarget = target instanceof HTMLElement && Boolean(
+      target.isContentEditable || target.closest('input, textarea, select, [role="textbox"]')
+    );
     const isOtherEditableTarget = (
       target instanceof HTMLElement
       && target !== inputRef.current
@@ -304,6 +316,28 @@ export function PlayerSearchOverlay({
     if (isOtherEditableTarget) return;
 
     const hasCommandModifier = event.altKey || event.ctrlKey || event.metaKey;
+    const isActivelyEditingSearch = target === inputRef.current && query.length > 0;
+    if (
+      isPlayerAutoLevelShortcut(event)
+      && (!isEditableTarget || (target === inputRef.current && !isActivelyEditingSearch))
+      && !event.repeat
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      onToggleAutoLevel();
+      return;
+    }
+    if (
+      isPlayerVocalCutShortcut(event)
+      && (!isEditableTarget || (target === inputRef.current && !isActivelyEditingSearch))
+      && !event.repeat
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      onToggleVocalCut();
+      return;
+    }
+
     const volumeShortcut = getPlayerVolumeShortcut(event);
     if (volumeShortcut && query.length === 0) {
       event.preventDefault();
@@ -428,6 +462,8 @@ export function PlayerSearchOverlay({
     moveQueueSelection,
     nowPlaying,
     onRestartCurrentSong,
+    onToggleAutoLevel,
+    onToggleVocalCut,
     query.length,
     results,
     selectedIndex,

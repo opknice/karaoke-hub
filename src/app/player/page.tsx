@@ -4,19 +4,44 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { QrCode, X } from 'lucide-react';
 import { PlayerSearchOverlay } from '@/components/PlayerSearchOverlay';
 import { PlayerQRGuideCard } from '@/components/PlayerQRGuideCard';
+import { PlayerVocalCutStatus } from '@/components/PlayerVocalCutStatus';
 import { YouTubePlayer, type YouTubePlayerHandle } from '@/components/YouTubePlayer';
 import { useKaraoke } from '@/context/KaraokeContext';
+import { useVocalCutExtension } from '@/hooks/useVocalCutExtension';
 
 export default function PlayerPage() {
-  const { activeRoom, ensureActiveRoom } = useKaraoke();
+  const { activeRoom, ensureActiveRoom, nowPlaying, volume, isMuted } = useKaraoke();
   const [isQueueBrowserActive, setIsQueueBrowserActive] = useState(false);
   const [showQRQuickModal, setShowQRQuickModal] = useState(false);
+  const [normalizeFeedbackPhase, setNormalizeFeedbackPhase] = useState<'hidden' | 'visible' | 'fading'>('hidden');
   const [roomSetupError, setRoomSetupError] = useState('');
   const [isRetryingRoom, setIsRetryingRoom] = useState(false);
   const playerRef = useRef<YouTubePlayerHandle>(null);
+  const normalizeFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const normalizeHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const vocalCut = useVocalCutExtension(
+    nowPlaying?.video.youtube_video_id ?? null,
+    volume,
+    isMuted
+  );
+  const toggleNormalize = vocalCut.toggleNormalize;
 
   const restartCurrentSong = useCallback(() => {
     playerRef.current?.restartCurrentSong();
+  }, []);
+
+  const toggleNormalizeWithFeedback = useCallback(() => {
+    toggleNormalize();
+    if (normalizeFadeTimerRef.current) clearTimeout(normalizeFadeTimerRef.current);
+    if (normalizeHideTimerRef.current) clearTimeout(normalizeHideTimerRef.current);
+    setNormalizeFeedbackPhase('visible');
+    normalizeFadeTimerRef.current = setTimeout(() => setNormalizeFeedbackPhase('fading'), 3000);
+    normalizeHideTimerRef.current = setTimeout(() => setNormalizeFeedbackPhase('hidden'), 3500);
+  }, [toggleNormalize]);
+
+  useEffect(() => () => {
+    if (normalizeFadeTimerRef.current) clearTimeout(normalizeFadeTimerRef.current);
+    if (normalizeHideTimerRef.current) clearTimeout(normalizeHideTimerRef.current);
   }, []);
 
   const initializeRoom = useCallback(async () => {
@@ -47,6 +72,17 @@ export default function PlayerPage() {
 
   return (
     <div className="relative flex h-dvh w-full flex-col overflow-hidden bg-black xl:flex-row">
+      <PlayerVocalCutStatus
+        state={vocalCut.state}
+        notice={vocalCut.notice}
+        hasRequestedFeedback={vocalCut.hasRequestedFeedback}
+        hasSong={Boolean(nowPlaying)}
+        onToggle={vocalCut.toggle}
+        onSubmitResult={vocalCut.submitResult}
+        onPresetChange={vocalCut.setPreset}
+        showNormalizeFeedback={normalizeFeedbackPhase !== 'hidden'}
+        normalizeFeedbackFading={normalizeFeedbackPhase === 'fading'}
+      />
       {roomSetupError && (
         <div
           role="alert"
@@ -132,6 +168,8 @@ export default function PlayerPage() {
       <PlayerSearchOverlay
         onQueueBrowserActiveChange={setIsQueueBrowserActive}
         onRestartCurrentSong={restartCurrentSong}
+        onToggleVocalCut={vocalCut.toggle}
+        onToggleAutoLevel={toggleNormalizeWithFeedback}
       />
     </div>
   );

@@ -19,6 +19,16 @@ export function getPlayerVolumeShortcut(
   return null;
 }
 
+export function isPlayerVocalCutShortcut(event: PlayerShortcutEvent): boolean {
+  if (event.altKey || event.ctrlKey || event.metaKey) return false;
+  return event.key === '*' || event.code === 'NumpadMultiply';
+}
+
+export function isPlayerAutoLevelShortcut(event: PlayerShortcutEvent): boolean {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+  return event.key === '/' || event.code === 'NumpadDivide';
+}
+
 export function adjustPlayerVolume(
   volume: number,
   shortcut: PlayerVolumeShortcut
