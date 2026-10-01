@@ -21,6 +21,10 @@ const postgrestCacheMigration = fs.readFileSync(
   path.join(projectRoot, 'supabase/migrations/20261001020324_reload_postgrest_schema_cache.sql'),
   'utf8'
 );
+const sharedPlaybackControlsMigration = fs.readFileSync(
+  path.join(projectRoot, 'supabase/migrations/20261001024319_shared_room_playback_controls.sql'),
+  'utf8'
+);
 const contextSource = fs.readFileSync(
   path.join(projectRoot, 'src/context/KaraokeContext.tsx'),
   'utf8'
@@ -73,7 +77,29 @@ test('shared floating queue exposes ordering and deletion controls only for queu
   assert.match(floatingQueueManagerSource, /moveQueueItem\(item\.id, 'down'\)/);
   assert.match(floatingQueueManagerSource, /removeFromQueue\(item\.id\)/);
   assert.match(floatingQueueManagerSource, /nowPlaying && \(/);
+  assert.match(floatingQueueManagerSource, /isQueueExpanded/);
+  assert.match(floatingQueueManagerSource, /aria-expanded=\{isQueueVisible\}/);
+  assert.match(floatingQueueManagerSource, /useSyncExternalStore/);
+  assert.match(floatingQueueManagerSource, /max-h-\[25dvh\]/);
   assert.doesNotMatch(floatingQueueManagerSource, /removeFromQueue\(nowPlaying/);
+});
+
+test('all room members can synchronously pause, resume, or end the current song', () => {
+  assert.match(sharedPlaybackControlsMigration, /add column if not exists playback_is_playing boolean/);
+  assert.match(sharedPlaybackControlsMigration, /create or replace function public\.set_room_playback/);
+  assert.match(sharedPlaybackControlsMigration, /member\.room_id = p_room_id/);
+  assert.match(sharedPlaybackControlsMigration, /member\.user_id = v_user_id/);
+  assert.match(sharedPlaybackControlsMigration, /create or replace function public\.advance_queue/);
+  assert.match(sharedPlaybackControlsMigration, /set playback_is_playing = v_next\.id is not null/);
+  assert.doesNotMatch(sharedPlaybackControlsMigration, /host permission required/);
+  assert.match(sharedPlaybackControlsMigration, /security definer/g);
+  assert.match(sharedPlaybackControlsMigration, /set search_path = ''/g);
+  assert.match(sharedPlaybackControlsMigration, /grant execute on function public\.set_room_playback\(uuid, uuid, boolean\) to authenticated/);
+  assert.match(sharedPlaybackControlsMigration, /notify pgrst, 'reload schema'/);
+  assert.match(contextSource, /rpc\('set_room_playback'/);
+  assert.match(contextSource, /table: 'rooms'/);
+  assert.match(floatingQueueManagerSource, /setRoomPlayback\(!isPlaying\)/);
+  assert.match(floatingQueueManagerSource, /runPlaybackAction\(skipSong\)/);
 });
 
 test('rooms bind verified auth users to persisted memberships', () => {

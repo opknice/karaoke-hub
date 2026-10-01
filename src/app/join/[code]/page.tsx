@@ -5,9 +5,12 @@ import { useParams } from 'next/navigation';
 import { useKaraoke } from '@/context/KaraokeContext';
 import { useAuth } from '@/context/AuthContext';
 import { YouTubeVideo } from '@/lib/types';
-import { SEED_KARAOKE_VIDEOS } from '@/lib/karaoke-seed';
 import { calculateEstimatedWait, formatDuration, formatMinutes } from '@/lib/queue-algorithm';
-import { searchYouTubeKaraoke, getLocalSearchPreview } from '@/lib/youtube-search-client';
+import {
+  getLocalSearchPreview,
+  getPopularKaraokeVideos,
+  searchYouTubeKaraoke,
+} from '@/lib/youtube-search-client';
 import {
   Mic,
   Search,
@@ -34,7 +37,6 @@ export default function GuestJoinPage() {
     removeFromQueue,
     currentMember,
     currentTime,
-    history,
   } = useKaraoke();
 
   const { nickname, setNickname } = useAuth();
@@ -50,11 +52,16 @@ export default function GuestJoinPage() {
   const [searchSource, setSearchSource] = useState<'catalog' | 'youtube'>('catalog');
   const [loadingSearch, setLoadingSearch] = useState(false);
   const [searchError, setSearchError] = useState('');
+  const [popularSongs, setPopularSongs] = useState<YouTubeVideo[]>([]);
+  const [loadingPopularSongs, setLoadingPopularSongs] = useState(true);
+  const [popularSongsError, setPopularSongsError] = useState('');
+  const [popularSongsRefresh, setPopularSongsRefresh] = useState(0);
   const [justAddedIds, setJustAddedIds] = useState<Set<string>>(new Set());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isQueueDrawerOpen, setIsQueueDrawerOpen] = useState(false);
 
   const searchRequestRef = useRef<AbortController | null>(null);
+  const popularSongsRequestRef = useRef<AbortController | null>(null);
   const toastTimerRef = useRef<NodeJS.Timeout | null>(null);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -75,10 +82,42 @@ export default function GuestJoinPage() {
   useEffect(() => {
     return () => {
       searchRequestRef.current?.abort();
+      popularSongsRequestRef.current?.abort();
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     };
   }, []);
+
+  // The blank search state should be useful immediately, but must never spend
+  // a YouTube Search quota. It only reads the already-synced Supabase catalog.
+  useEffect(() => {
+    if (!hasJoined) return;
+
+    const controller = new AbortController();
+    popularSongsRequestRef.current = controller;
+
+    getPopularKaraokeVideos(controller.signal)
+      .then((videos) => {
+        if (!controller.signal.aborted) setPopularSongs(videos);
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setPopularSongsError(
+            error instanceof Error ? error.message : 'โหลดเพลงยอดนิยมไม่สำเร็จ กรุณาลองใหม่'
+          );
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setLoadingPopularSongs(false);
+          if (popularSongsRequestRef.current === controller) {
+            popularSongsRequestRef.current = null;
+          }
+        }
+      });
+
+    return () => controller.abort();
+  }, [hasJoined, popularSongsRefresh]);
 
   // Filter songs requested by this user in the party queue
   const myQueueItems = useMemo(() => {
@@ -291,54 +330,17 @@ export default function GuestJoinPage() {
     toastTimerRef.current = setTimeout(() => setToastMessage(null), 2500);
   };
 
-  // Calculate most frequently played songs from history
-  const { topHistorySongs, hasHistory } = useMemo(() => {
-    if (!history || history.length === 0) {
-      return { topHistorySongs: SEED_KARAOKE_VIDEOS.slice(0, 10), hasHistory: false };
-    }
-
-    const userTarget = guestName.trim().toLowerCase();
-    // 1. Try songs sung by this user first
-    const userHistory = userTarget
-      ? history.filter((item) =>
-          item.singers.some((s) => s.toLowerCase() === userTarget)
-        )
-      : [];
-
-    const itemsToCount = userHistory.length > 0 ? userHistory : history;
-
-    // Count frequency
-    const countMap = new Map<string, { count: number; video: YouTubeVideo }>();
-    itemsToCount.forEach((item) => {
-      if (!item.video || !item.youtube_video_id) return;
-      const key = item.youtube_video_id;
-      const existing = countMap.get(key);
-      if (existing) {
-        existing.count += 1;
-      } else {
-        countMap.set(key, { count: 1, video: item.video });
-      }
-    });
-
-    const sorted = Array.from(countMap.values())
-      .sort((a, b) => b.count - a.count)
-      .map((entry) => ({
-        ...entry.video,
-        playCount: entry.count,
-      }));
-
-    if (sorted.length > 0) {
-      return { topHistorySongs: sorted.slice(0, 10), hasHistory: true };
-    }
-
-    return { topHistorySongs: SEED_KARAOKE_VIDEOS.slice(0, 10), hasHistory: false };
-  }, [history, guestName]);
-
-  // List to display: either search results or top history songs
+  // List to display: search results while searching, otherwise the top 50
+  // cached karaoke videos by YouTube view count.
   const isSearchActive = searchQuery.trim().length >= 2;
-  const displaySongs: (YouTubeVideo & { playCount?: number })[] = isSearchActive
+  const displaySongs: YouTubeVideo[] = isSearchActive
     ? searchResults
-    : topHistorySongs;
+    : popularSongs;
+
+  const formatViewCount = (views: number): string => new Intl.NumberFormat('th-TH', {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(views);
 
   // ==========================================
   // SCREEN 1: JOIN ROOM (NICKNAME ENTRY)
@@ -576,29 +578,46 @@ export default function GuestJoinPage() {
                   </span>
                 )}
               </>
-            ) : hasHistory ? (
-              <>
-                <Flame className="w-3.5 h-3.5 text-amber-400" />
-                <span>เพลงที่คุณร้องบ่อยที่สุด</span>
-              </>
             ) : (
               <>
                 <Flame className="w-3.5 h-3.5 text-pink-500" />
-                <span>เพลงแนะนำในคลัง</span>
+                <span>เพลงคาราโอเกะยอดนิยม</span>
               </>
             )}
           </div>
 
           {!isSearchActive && (
             <span className="text-[11px] text-zinc-500">
-              กด + เพิ่ม ได้ทันที
+              {loadingPopularSongs ? 'กำลังโหลด...' : 'ยอดวิวสูงสุด 50 รายการ'}
             </span>
           )}
         </div>
 
         {/* Songs List */}
         <div className="space-y-2.5">
-          {displaySongs.length === 0 ? (
+          {!isSearchActive && loadingPopularSongs && displaySongs.length === 0 ? (
+            <div className="py-12 text-center rounded-2xl bg-zinc-900/40 border border-zinc-850 p-6 space-y-3">
+              <Loader2 className="w-8 h-8 text-violet-400 animate-spin mx-auto" />
+              <p className="text-sm font-semibold text-zinc-300">กำลังโหลดเพลงคาราโอเกะยอดนิยม</p>
+            </div>
+          ) : !isSearchActive && popularSongsError ? (
+            <div className="py-12 text-center rounded-2xl bg-zinc-900/40 border border-zinc-850 p-6 space-y-3">
+              <Search className="w-8 h-8 text-zinc-600 mx-auto" />
+              <p className="text-sm font-semibold text-zinc-300">โหลดเพลงยอดนิยมไม่สำเร็จ</p>
+              <p className="text-xs text-zinc-400 max-w-xs mx-auto">{popularSongsError}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setLoadingPopularSongs(true);
+                  setPopularSongsError('');
+                  setPopularSongsRefresh((value) => value + 1);
+                }}
+                className="mt-2 py-2 px-4 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-xs active:scale-[0.98] transition"
+              >
+                ลองใหม่
+              </button>
+            </div>
+          ) : displaySongs.length === 0 ? (
             <div className="py-12 text-center rounded-2xl bg-zinc-900/40 border border-zinc-850 p-6 space-y-3">
               <Search className="w-8 h-8 text-zinc-600 mx-auto" />
               <p className="text-sm font-semibold text-zinc-300">
@@ -658,10 +677,10 @@ export default function GuestJoinPage() {
                     <p className="text-[11px] text-zinc-400 truncate mt-0.5">
                       {video.channel_name || video.artist || 'Karaoke'}
                     </p>
-                    {!isSearchActive && video.playCount !== undefined && video.playCount > 0 ? (
+                    {!isSearchActive && video.views_count !== undefined ? (
                       <span className="inline-flex items-center gap-1 mt-1 text-[10px] font-semibold text-amber-300 bg-amber-950/40 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
                         <Flame className="w-2.5 h-2.5 fill-current text-amber-400" />
-                        <span>ร้องบ่อย {video.playCount} ครั้ง</span>
+                        <span>ยอดวิว {formatViewCount(video.views_count)}</span>
                       </span>
                     ) : isAlreadyInQueue && !isJustAdded ? (
                       <span className="inline-block mt-1 text-[10px] text-violet-400 font-medium">

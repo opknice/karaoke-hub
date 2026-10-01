@@ -334,6 +334,59 @@ test('catalog previews never call YouTube; explicit refresh uses only videos.lis
   }
 });
 
+test('popular catalog reads 50 playable songs ordered by stored YouTube views without calling YouTube', async () => {
+  const originalFetch = global.fetch;
+  const originalUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const originalServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const originalSecretKey = process.env.SUPABASE_SECRET_KEY;
+  process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://popular-catalog-test.supabase.co';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-only';
+  delete process.env.SUPABASE_SECRET_KEY;
+  const requests = [];
+  const makeVideo = (id, views) => ({
+    id: `yt-${id}`,
+    youtube_video_id: id,
+    title: `เพลง ${id} karaoke`,
+    channel_id: 'channel',
+    channel_name: 'Karaoke',
+    thumbnail_url: '',
+    duration: 180,
+    embeddable: true,
+    karaoke_score: 90,
+    views_count: views,
+  });
+  const highest = makeVideo('ABCDEFGHIJK', 5_000_000);
+  const second = makeVideo('LMNOPQRSTUV', 4_000_000);
+  global.fetch = async (input) => {
+    const url = new URL(input);
+    requests.push(url);
+    assert.equal(url.hostname, 'popular-catalog-test.supabase.co');
+    assert.equal(url.pathname, '/rest/v1/karaoke_catalog');
+    return Response.json([{ payload: highest }, { payload: second }, { payload: { invalid: true } }]);
+  };
+  try {
+    const catalog = loader()('src/lib/youtube-catalog.ts');
+    const popular = await catalog.getTopCatalogVideos(100);
+    assert.deepEqual(popular, [highest, second]);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].searchParams.get('select'), 'payload');
+    assert.equal(requests[0].searchParams.get('payload->>embeddable'), 'eq.true');
+    assert.equal(requests[0].searchParams.get('order'), 'payload->views_count.desc,video_id.asc');
+    assert.equal(requests[0].searchParams.get('limit'), '50');
+    assert.match(requests[0].searchParams.get('expires_at'), /^gt\./);
+    await catalog.getTopCatalogVideos(50);
+    assert.equal(requests.length, 1, 'popular catalog results are briefly cached');
+  } finally {
+    global.fetch = originalFetch;
+    if (originalUrl === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    else process.env.NEXT_PUBLIC_SUPABASE_URL = originalUrl;
+    if (originalServiceKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    else process.env.SUPABASE_SERVICE_ROLE_KEY = originalServiceKey;
+    if (originalSecretKey === undefined) delete process.env.SUPABASE_SECRET_KEY;
+    else process.env.SUPABASE_SECRET_KEY = originalSecretKey;
+  }
+});
+
 test('catalog search falls back to an indexed title-prefix pool before the v2 RPC is installed', async () => {
   const originalFetch = global.fetch;
   const originalUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;

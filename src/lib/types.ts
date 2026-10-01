@@ -98,6 +98,8 @@ export interface Room {
   queue_mode: QueueMode;
   request_mode: RequestMode;
   is_queue_locked: boolean;
+  playback_is_playing?: boolean;
+  playback_updated_at?: string;
   created_at: string;
   closed_at?: string;
 }

@@ -60,6 +60,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     volume,
     isMuted,
     setIsPlaying,
+    setRoomPlayback,
     setCurrentTime,
     setDuration,
     setVolume,
@@ -437,6 +438,17 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     }
   };
 
+  const toggleSharedPlayback = () => {
+    const nextIsPlaying = !isPlaying;
+
+    // Starting the local player inside the click handler preserves browser
+    // autoplay permission, while the RPC below makes the decision shared.
+    if (nextIsPlaying) enablePlayback();
+    else setIsPlaying(false);
+
+    void setRoomPlayback(nextIsPlaying).catch(console.warn);
+  };
+
   const nextSong = queue[0];
   const primarySinger = nowPlaying?.singers.map((s) => s.name).join(' & ') || nowPlaying?.requested_by || 'Singer';
   const visiblePlayerError = playerError?.itemId === currentItemId ? playerError.message : null;
@@ -508,7 +520,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
           <div className="absolute inset-0 bg-zinc-950/90 flex flex-col items-center justify-center p-6 text-center z-10">
             <p className="text-amber-400 font-medium mb-3">{visiblePlayerError}</p>
             <button
-              onClick={skipSong}
+              onClick={() => void skipSong().catch(console.warn)}
               className="px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-semibold text-sm transition"
             >
               Skip to Next Song
@@ -570,8 +582,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
 
               <button
                 onClick={() => {
-                  if (isPlaying) setIsPlaying(false);
-                  else enablePlayback();
+                  toggleSharedPlayback();
                 }}
                 className="p-2.5 bg-violet-600 hover:bg-violet-500 text-white rounded-xl shadow-lg transition"
                 title={isPlaying ? 'Pause' : 'Play'}
@@ -580,7 +591,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
               </button>
 
               <button
-                onClick={skipSong}
+                onClick={() => void skipSong().catch(console.warn)}
                 className="p-2 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition"
                 title="Skip to Next"
               >

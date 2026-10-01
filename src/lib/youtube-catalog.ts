@@ -15,7 +15,9 @@ const DAY = 24 * HOUR;
 const RANKED_CATALOG_RETRY_DELAY = 60_000;
 const DAILY_REFRESH_BATCHES = 16;
 const DAILY_SYNC_BUDGET_MS = 240_000;
+const POPULAR_CATALOG_CACHE_TTL = 60_000;
 const queryCache = new Map<string, { expires: number; promise: Promise<YouTubeVideo[]> }>();
+const popularCatalogCache = new Map<number, { expires: number; promise: Promise<YouTubeVideo[]> }>();
 let rankedCatalogUnavailableUntil = 0;
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -36,6 +38,13 @@ export function catalogPatterns(query: string): string[] {
 function catalogVideos(value: unknown): YouTubeVideo[] {
   if (!Array.isArray(value)) throw new Error('รูปแบบข้อมูลคลังเพลงไม่ถูกต้อง');
   return value.filter(isYouTubeVideo);
+}
+
+function catalogPayloadVideos(value: unknown): YouTubeVideo[] {
+  if (!Array.isArray(value)) throw new Error('รูปแบบข้อมูลคลังเพลงไม่ถูกต้อง');
+  return value.flatMap((row): YouTubeVideo[] => (
+    record(row) && isYouTubeVideo(row.payload) ? [row.payload] : []
+  ));
 }
 
 function uniqueVideos(groups: readonly YouTubeVideo[][]): YouTubeVideo[] {
@@ -122,6 +131,33 @@ export async function searchCatalog(query: string): Promise<YouTubeVideo[]> {
   return rankKaraokeVideos((await cached.promise).map(hideStaleViews), query).slice(0, 25);
 }
 
+// Reads only the server-private catalog. The payload stores the numeric
+// YouTube view count, so PostgREST can rank the cached songs without spending
+// any YouTube API quota.
+export async function getTopCatalogVideos(limit = 50): Promise<YouTubeVideo[]> {
+  const safeLimit = Math.min(Math.max(Math.trunc(limit), 1), 50);
+  let cached = popularCatalogCache.get(safeLimit);
+  if (!cached || cached.expires <= Date.now()) {
+    const params = new URLSearchParams({
+      select: 'payload',
+      'expires_at': `gt.${new Date().toISOString()}`,
+      'payload->>embeddable': 'eq.true',
+      'order': 'payload->views_count.desc,video_id.asc',
+      limit: String(safeLimit),
+    });
+    const promise = catalogRest(`karaoke_catalog?${params.toString()}`)
+      .then(catalogPayloadVideos);
+    cached = { expires: Date.now() + POPULAR_CATALOG_CACHE_TTL, promise };
+    popularCatalogCache.set(safeLimit, cached);
+    void promise.catch(() => {
+      if (popularCatalogCache.get(safeLimit)?.promise === promise) {
+        popularCatalogCache.delete(safeLimit);
+      }
+    });
+  }
+  return cached.promise;
+}
+
 export async function saveCatalogVideos(videos: readonly YouTubeVideo[]): Promise<void> {
   const rows = videos.flatMap((video) => {
     const refreshed = Date.parse(video.last_synced_at ?? '');
@@ -136,6 +172,7 @@ export async function saveCatalogVideos(videos: readonly YouTubeVideo[]): Promis
     method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(rows),
   });
   queryCache.clear();
+  popularCatalogCache.clear();
 }
 
 async function youtubeCatalogRequest(endpoint: 'channels' | 'playlistItems' | 'videos', params: Record<string, string>): Promise<Record<string, unknown>> {

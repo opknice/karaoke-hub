@@ -355,7 +355,7 @@ export function PlayerSearchOverlay({
 
       event.preventDefault();
       if (event.key === 'Home') onRestartCurrentSong();
-      else skipSong();
+      else void skipSong().catch(console.warn);
       return;
     }
 

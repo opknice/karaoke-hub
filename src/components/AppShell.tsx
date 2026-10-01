@@ -12,6 +12,7 @@ interface AppShellProps {
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const isImmersivePlayer = pathname === '/player';
+  const isGuestJoinPage = pathname.startsWith('/join/');
 
   return (
     <div
@@ -28,7 +29,7 @@ export function AppShell({ children }: AppShellProps) {
             <div className="absolute top-1/3 -right-40 w-96 h-96 bg-pink-600/10 rounded-full blur-[128px]" />
             <div className="absolute -bottom-40 left-1/3 w-96 h-96 bg-cyan-600/10 rounded-full blur-[128px]" />
           </div>
-          <Navbar />
+          {!isGuestJoinPage && <Navbar />}
         </>
       )}
 

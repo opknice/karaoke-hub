@@ -168,3 +168,15 @@ export async function previewCatalog(query: string, signal: AbortSignal): Promis
   if (!response.ok) throw new Error('คลังเพลงยังไม่พร้อมใช้งาน ไม่มีการค้น YouTube อัตโนมัติ');
   return parseSearchResponse(payload).data;
 }
+
+export async function getPopularKaraokeVideos(signal: AbortSignal): Promise<YouTubeVideo[]> {
+  const response = await fetch('/api/catalog/popular', { signal, cache: 'no-store' });
+  const payload: unknown = await response.json();
+  if (!response.ok) {
+    const message = isRecord(payload) && typeof payload.error === 'string'
+      ? payload.error
+      : 'คลังเพลงยอดนิยมยังไม่พร้อมใช้งาน กรุณาลองใหม่';
+    throw new Error(message);
+  }
+  return parseSearchResponse(payload).data;
+}

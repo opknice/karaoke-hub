@@ -27,7 +27,7 @@ export default function QueuePage() {
   const {
     nowPlaying,
     isPlaying,
-    setIsPlaying,
+    setRoomPlayback,
     skipSong,
     previousSong,
     currentTime,
@@ -111,7 +111,7 @@ export default function QueuePage() {
             {/* Playback Controls */}
             <div className="flex items-center gap-3">
               <button
-                onClick={() => setIsPlaying(!isPlaying)}
+                onClick={() => void setRoomPlayback(!isPlaying).catch(console.warn)}
                 className="px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-semibold text-xs flex items-center gap-2 shadow-lg shadow-violet-600/30 transition"
               >
                 {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 fill-current" />}
@@ -119,7 +119,7 @@ export default function QueuePage() {
               </button>
 
               <button
-                onClick={skipSong}
+                onClick={() => void skipSong().catch(console.warn)}
                 className="px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs flex items-center gap-1.5 transition"
               >
                 <SkipForward className="w-4 h-4" />

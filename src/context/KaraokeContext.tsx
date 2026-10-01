@@ -29,11 +29,12 @@ interface KaraokeContextType {
   isMuted: boolean;
   isTVModeActive: boolean;
   setIsPlaying: (playing: boolean) => void;
+  setRoomPlayback: (playing: boolean) => Promise<void>;
   setCurrentTime: (time: number) => void;
   setDuration: (dur: number) => void;
   setVolume: (vol: number) => void;
   setIsMuted: (muted: boolean) => void;
-  skipSong: () => void;
+  skipSong: () => Promise<void>;
   previousSong: () => void;
   onSongEnd: (expectedItemId: string) => void;
   handlePlaybackError: (expectedItemId: string) => void;
@@ -696,7 +697,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
     localStorage.setItem(STORAGE_KEYS.MEMBERS, JSON.stringify(roomMembers));
   }, [isHydrated, roomMembers]);
 
-  const applyAuthoritativeQueueRows = useCallback((rows: SupabaseQueueRow[]) => {
+  const applyAuthoritativeQueueRows = useCallback((rows: SupabaseQueueRow[], playbackIsPlaying = true) => {
     const roomItems = rows.map(mapSupabaseQueueRow);
     const playingItem = roomItems.find((item) => item.status === 'playing') ?? null;
     const queuedItems = roomItems
@@ -706,11 +707,12 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     queueRef.current = queuedItems;
     nowPlayingRef.current = playingItem;
-    isPlayingRef.current = Boolean(playingItem);
+    const nextIsPlaying = Boolean(playingItem) && playbackIsPlaying;
+    isPlayingRef.current = nextIsPlaying;
     transitioningItemIdRef.current = null;
     setQueue(queuedItems);
     setNowPlaying(playingItem);
-    setIsPlayingState(Boolean(playingItem));
+    setIsPlayingState(nextIsPlaying);
     if (!playingItem) {
       setCurrentTimeState(0);
     }
@@ -722,15 +724,35 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const supabase = getSupabaseBrowserClient();
       if (!supabase) throw new Error('ระบบ Queue ยังไม่พร้อมใช้งาน');
 
-      const { data, error } = await supabase
-        .from('queue_items')
-        .select('*')
-        .eq('room_id', roomId)
-        .in('status', ['playing', 'queued'])
-        .order('position', { ascending: true });
+      const [queueResult, playbackResult] = await Promise.all([
+        supabase
+          .from('queue_items')
+          .select('*')
+          .eq('room_id', roomId)
+          .in('status', ['playing', 'queued'])
+          .order('position', { ascending: true }),
+        supabase
+          .from('rooms')
+          .select('playback_is_playing')
+          .eq('id', roomId)
+          .maybeSingle(),
+      ]);
 
-      if (error) throw new Error(`ไม่สามารถโหลด Queue ได้: ${error.message}`);
-      applyAuthoritativeQueueRows((data ?? []) as unknown as SupabaseQueueRow[]);
+      if (queueResult.error) throw new Error(`ไม่สามารถโหลด Queue ได้: ${queueResult.error.message}`);
+
+      // This fallback keeps local development usable until this checked-in
+      // migration is applied. Production uses the room value as the source of
+      // truth as soon as the new column is available.
+      const playbackColumnUnavailable =
+        playbackResult.error?.message.includes('playback_is_playing') ?? false;
+      if (playbackResult.error && !playbackColumnUnavailable) {
+        throw new Error(`ไม่สามารถโหลดสถานะการเล่นได้: ${playbackResult.error.message}`);
+      }
+
+      const playbackIsPlaying = playbackColumnUnavailable
+        ? true
+        : playbackResult.data?.playback_is_playing !== false;
+      applyAuthoritativeQueueRows((queueResult.data ?? []) as unknown as SupabaseQueueRow[], playbackIsPlaying);
     },
     [applyAuthoritativeQueueRows]
   );
@@ -769,6 +791,16 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
               schema: 'public',
               table: 'queue_items',
               filter: `room_id=eq.${activeRoom.id}`,
+            },
+            scheduleRefresh
+          )
+          .on(
+            'postgres_changes',
+            {
+              event: 'UPDATE',
+              schema: 'public',
+              table: 'rooms',
+              filter: `id=eq.${activeRoom.id}`,
             },
             scheduleRefresh
           )
@@ -850,6 +882,39 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
       broadcast({ type: 'SET_IS_PLAYING', payload: playing });
     },
     [broadcast]
+  );
+
+  const setRoomPlayback = useCallback(
+    async (playing: boolean): Promise<void> => {
+      const current = nowPlayingRef.current;
+      const roomId = activeRoomRef.current?.id;
+
+      if (!roomId || !current || !isDatabaseQueueItem(current)) {
+        setIsPlaying(playing);
+        return;
+      }
+
+      await ensureSupabaseIdentity();
+      const supabase = getSupabaseBrowserClient();
+      if (!supabase) throw new Error('ระบบ Queue ยังไม่พร้อมใช้งาน');
+
+      const { data, error } = await supabase.rpc('set_room_playback', {
+        p_room_id: roomId,
+        p_expected_playing_id: current.database_id,
+        p_is_playing: playing,
+      });
+      if (error) throw new Error(`ไม่สามารถเปลี่ยนสถานะการเล่นได้: ${error.message}`);
+
+      // Another member may have ended or replaced the song while this action
+      // was in flight, so always reload the database state.
+      if (isRecord(data) && data.changed === false) {
+        await refreshRoomQueue(roomId);
+        return;
+      }
+
+      await refreshRoomQueue(roomId);
+    },
+    [refreshRoomQueue, setIsPlaying]
   );
 
   // Time ticker sync
@@ -982,9 +1047,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [advancePlayback]);
 
   // Skip current song from a user action.
-  const skipSong = useCallback(() => {
-    void advancePlayback('skipped').catch(console.warn);
-  }, [advancePlayback]);
+  const skipSong = useCallback(() => advancePlayback('skipped'), [advancePlayback]);
 
   // Unavailable/restricted videos must not block the rest of the queue.
   const handlePlaybackError = useCallback((expectedItemId: string) => {
@@ -1460,6 +1523,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
         isMuted,
         isTVModeActive,
         setIsPlaying,
+        setRoomPlayback,
         setCurrentTime,
         setDuration,
         setVolume,
