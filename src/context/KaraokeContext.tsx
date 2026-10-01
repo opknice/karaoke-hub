@@ -1076,8 +1076,8 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
       await ensureSupabaseIdentity();
       const supabase = getSupabaseBrowserClient();
       if (!supabase) throw new Error('ระบบ Queue ยังไม่พร้อมใช้งาน');
-      const { error } = await supabase.rpc('cancel_own_song', { p_item_id: item.database_id });
-      if (error) throw new Error(`ไม่สามารถยกเลิกเพลงได้: ${error.message}`);
+      const { error } = await supabase.rpc('cancel_room_queue_item', { p_item_id: item.database_id });
+      if (error) throw new Error(`ไม่สามารถลบเพลงออกจากคิวได้: ${error.message}`);
       await refreshRoomQueue(item.room_id);
     },
     [refreshRoomQueue]

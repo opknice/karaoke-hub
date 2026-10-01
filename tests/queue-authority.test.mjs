@@ -13,8 +13,20 @@ const hardeningMigration = fs.readFileSync(
   path.join(projectRoot, 'supabase/migrations/20260930085944_queue_authority_v2_hardening.sql'),
   'utf8'
 );
+const sharedQueueManagementMigration = fs.readFileSync(
+  path.join(projectRoot, 'supabase/migrations/20261001015925_allow_room_members_manage_queue.sql'),
+  'utf8'
+);
+const postgrestCacheMigration = fs.readFileSync(
+  path.join(projectRoot, 'supabase/migrations/20261001020311_reload_postgrest_schema_cache.sql'),
+  'utf8'
+);
 const contextSource = fs.readFileSync(
   path.join(projectRoot, 'src/context/KaraokeContext.tsx'),
+  'utf8'
+);
+const floatingQueueManagerSource = fs.readFileSync(
+  path.join(projectRoot, 'src/components/FloatingQueueManager.tsx'),
   'utf8'
 );
 const roomRouteSource = fs.readFileSync(
@@ -39,6 +51,29 @@ test('authenticated clients cannot bypass queue RPCs with direct writes', () => 
   );
   assert.doesNotMatch(contextSource, /\.from\('queue_items'\)\s*\.insert/);
   assert.doesNotMatch(contextSource, /\.from\('queue_items'\)\s*\.update/);
+});
+
+test('room members can manage waiting songs without being able to alter the playing song', () => {
+  assert.match(sharedQueueManagementMigration, /create or replace function public\.reorder_room_queue/);
+  assert.match(sharedQueueManagementMigration, /member\.room_id = p_room_id/);
+  assert.match(sharedQueueManagementMigration, /member\.user_id = v_user_id/);
+  assert.match(sharedQueueManagementMigration, /create or replace function public\.cancel_room_queue_item/);
+  assert.match(sharedQueueManagementMigration, /v_item\.status not in \('pending', 'queued'\)/);
+  assert.match(sharedQueueManagementMigration, /security definer/);
+  assert.match(sharedQueueManagementMigration, /set search_path = ''/);
+  assert.match(sharedQueueManagementMigration, /revoke execute on function public\.cancel_room_queue_item\(uuid\) from public, anon/);
+  assert.match(sharedQueueManagementMigration, /grant execute on function public\.cancel_room_queue_item\(uuid\) to authenticated/);
+  assert.match(contextSource, /rpc\('cancel_room_queue_item'/);
+  assert.match(postgrestCacheMigration, /notify pgrst, 'reload schema'/);
+});
+
+test('shared floating queue exposes ordering and deletion controls only for queued songs', () => {
+  assert.match(floatingQueueManagerSource, /คิวเพลงของห้อง/);
+  assert.match(floatingQueueManagerSource, /moveQueueItem\(item\.id, 'up'\)/);
+  assert.match(floatingQueueManagerSource, /moveQueueItem\(item\.id, 'down'\)/);
+  assert.match(floatingQueueManagerSource, /removeFromQueue\(item\.id\)/);
+  assert.match(floatingQueueManagerSource, /nowPlaying && \(/);
+  assert.doesNotMatch(floatingQueueManagerSource, /removeFromQueue\(nowPlaying/);
 });
 
 test('rooms bind verified auth users to persisted memberships', () => {

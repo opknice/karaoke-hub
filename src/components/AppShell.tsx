@@ -1,7 +1,7 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
-import { FloatingPlayer } from '@/components/FloatingPlayer';
+import { FloatingQueueManager } from '@/components/FloatingQueueManager';
 import { Navbar } from '@/components/Navbar';
 import { RatingModal } from '@/components/RatingModal';
 
@@ -36,7 +36,7 @@ export function AppShell({ children }: AppShellProps) {
         className={
           isImmersivePlayer
             ? 'relative h-dvh w-full overflow-hidden bg-black'
-            : 'relative z-10 flex-1 flex flex-col pb-24'
+            : 'relative z-10 flex-1 flex flex-col pb-80 sm:pb-96'
         }
       >
         {children}
@@ -44,7 +44,7 @@ export function AppShell({ children }: AppShellProps) {
 
       {!isImmersivePlayer && (
         <>
-          <FloatingPlayer />
+          <FloatingQueueManager />
           <RatingModal />
         </>
       )}
