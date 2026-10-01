@@ -14,11 +14,11 @@ const hardeningMigration = fs.readFileSync(
   'utf8'
 );
 const sharedQueueManagementMigration = fs.readFileSync(
-  path.join(projectRoot, 'supabase/migrations/20261001015925_allow_room_members_manage_queue.sql'),
+  path.join(projectRoot, 'supabase/migrations/20261001020131_allow_room_members_manage_queue.sql'),
   'utf8'
 );
 const postgrestCacheMigration = fs.readFileSync(
-  path.join(projectRoot, 'supabase/migrations/20261001020311_reload_postgrest_schema_cache.sql'),
+  path.join(projectRoot, 'supabase/migrations/20261001020324_reload_postgrest_schema_cache.sql'),
   'utf8'
 );
 const contextSource = fs.readFileSync(
