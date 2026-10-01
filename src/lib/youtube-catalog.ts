@@ -13,6 +13,8 @@ import type { YouTubeVideo } from './types';
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const RANKED_CATALOG_RETRY_DELAY = 60_000;
+const DAILY_REFRESH_BATCHES = 16;
+const DAILY_SYNC_BUDGET_MS = 240_000;
 const queryCache = new Map<string, { expires: number; promise: Promise<YouTubeVideo[]> }>();
 let rankedCatalogUnavailableUntil = 0;
 
@@ -168,6 +170,21 @@ async function unlock(name: string, token: string): Promise<void> {
   }
 }
 
+async function resolveUploadsPlaylist(
+  channel: OfficialYouTubeChannel,
+  existingPlaylistId = ''
+): Promise<string> {
+  if (existingPlaylistId) return existingPlaylistId;
+  const data = await youtubeCatalogRequest('channels', {
+    part: 'contentDetails', id: channel.channelId,
+  });
+  const item = Array.isArray(data.items) ? data.items[0] as unknown : undefined;
+  const details = record(item) && record(item.contentDetails) ? item.contentDetails : undefined;
+  const playlists = details && record(details.relatedPlaylists) ? details.relatedPlaylists : undefined;
+  if (typeof playlists?.uploads !== 'string') throw new Error('ไม่พบ uploads playlist ของช่อง');
+  return playlists.uploads;
+}
+
 async function refreshIds(
   ids: readonly string[],
   importChannel?: OfficialYouTubeChannel
@@ -226,14 +243,7 @@ export async function syncOfficialCatalog(onProgress: (message: string) => void)
       }
       let playlistId = typeof state?.playlist_id === 'string' ? state.playlist_id : '';
       let pageToken = typeof state?.page_token === 'string' ? state.page_token : '';
-      if (!playlistId) {
-        const data = await youtubeCatalogRequest('channels', { part: 'contentDetails', id: channel.channelId });
-        const item = Array.isArray(data.items) ? data.items[0] as unknown : undefined;
-        const details = record(item) && record(item.contentDetails) ? item.contentDetails : undefined;
-        const playlists = details && record(details.relatedPlaylists) ? details.relatedPlaylists : undefined;
-        if (typeof playlists?.uploads !== 'string') throw new Error('ไม่พบ uploads playlist ของช่อง');
-        playlistId = playlists.uploads;
-      }
+      playlistId = await resolveUploadsPlaylist(channel, playlistId);
       for (let page = 0; page < 100; page++) {
         if (!await lock(name, token)) throw new Error('สิทธิ์ล็อกการนำเข้าหมดอายุ กรุณาลองใหม่');
         const data = await youtubeCatalogRequest('playlistItems', {
@@ -266,4 +276,91 @@ export async function syncOfficialCatalog(onProgress: (message: string) => void)
     await refreshIds(ids);
     onProgress(`อัปเดตข้อมูลเก่า ${ids.length} วิดีโอ`);
   }
+}
+
+export interface DailyCatalogSyncResult {
+  channelsProcessed: number;
+  videosImported: number;
+  videosRefreshed: number;
+  refreshBatches: number;
+  stoppedEarly: boolean;
+  messages: string[];
+}
+
+// Vercel Hobby runs this once per day. Scan only the newest page from each
+// official channel, then refresh bounded batches of the oldest metadata. The
+// full historical import remains an explicit local operator command.
+export async function syncOfficialCatalogDaily(): Promise<DailyCatalogSyncResult> {
+  const startedAt = Date.now();
+  const messages: string[] = [];
+  let channelsProcessed = 0;
+  let videosImported = 0;
+  let videosRefreshed = 0;
+  let refreshBatches = 0;
+  let stoppedEarly = false;
+  const hasTime = () => Date.now() - startedAt < DAILY_SYNC_BUDGET_MS;
+
+  for (const channel of OFFICIAL_YOUTUBE_CHANNELS) {
+    if (!hasTime()) { stoppedEarly = true; break; }
+    const name = `sync:${channel.channelId}`;
+    const token = randomUUID();
+    if (!await lock(name, token)) {
+      messages.push(`${channel.name}: ข้ามเพราะมีงานนำเข้าทำงานอยู่`);
+      continue;
+    }
+    try {
+      const stateRows = await catalogRest(
+        `karaoke_catalog_sync?channel_id=eq.${channel.channelId}&select=*`
+      );
+      const state = Array.isArray(stateRows) && record(stateRows[0]) ? stateRows[0] : undefined;
+      const playlistId = await resolveUploadsPlaylist(
+        channel, typeof state?.playlist_id === 'string' ? state.playlist_id : ''
+      );
+      const data = await youtubeCatalogRequest('playlistItems', {
+        part: 'contentDetails', playlistId, maxResults: '50',
+      });
+      const ids = (data.items as unknown[]).flatMap((item): string[] => {
+        const details = record(item) && record(item.contentDetails) ? item.contentDetails : undefined;
+        return typeof details?.videoId === 'string' && /^[\w-]{11}$/.test(details.videoId)
+          ? [details.videoId] : [];
+      });
+      const imported = ids.length ? await refreshIds(ids, channel) : [];
+      if (!state) {
+        await catalogRest('karaoke_catalog_sync?on_conflict=channel_id', {
+          method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+          body: JSON.stringify({ channel_id: channel.channelId, playlist_id: playlistId,
+            page_token: null, completed_at: null, updated_at: new Date().toISOString() }),
+        });
+      }
+      channelsProcessed++;
+      videosImported += imported.length;
+      messages.push(`${channel.name}: ตรวจวิดีโอล่าสุด ${ids.length}, บันทึก ${imported.length}`);
+    } catch (error: unknown) {
+      messages.push(`${channel.name}: ${error instanceof Error ? error.message : 'อัปเดตไม่สำเร็จ'}`);
+    } finally { await unlock(name, token); }
+  }
+
+  for (let batch = 0; batch < DAILY_REFRESH_BATCHES; batch++) {
+    if (!hasTime()) { stoppedEarly = true; break; }
+    const cutoff = new Date(Date.now() - 7 * DAY).toISOString();
+    const rows = await catalogRest(
+      `karaoke_catalog?select=video_id&refreshed_at=lt.${encodeURIComponent(cutoff)}&order=refreshed_at.asc&limit=50`
+    );
+    const ids = Array.isArray(rows) ? rows.flatMap((row): string[] => (
+      record(row) && typeof row.video_id === 'string' ? [row.video_id] : []
+    )) : [];
+    if (!ids.length) break;
+    try {
+      const refreshed = await refreshIds(ids);
+      videosRefreshed += refreshed.length;
+      refreshBatches++;
+    } catch (error: unknown) {
+      messages.push(`refresh: ${error instanceof Error ? error.message : 'อัปเดตไม่สำเร็จ'}`);
+      stoppedEarly = true;
+      break;
+    }
+  }
+
+  messages.push(`สรุป: ช่อง ${channelsProcessed}, เพิ่ม/อัปเดตล่าสุด ${videosImported}, รีเฟรช ${videosRefreshed}`);
+  return { channelsProcessed, videosImported, videosRefreshed, refreshBatches, stoppedEarly, messages };
 }

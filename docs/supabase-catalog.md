@@ -23,7 +23,13 @@ npm run catalog:sync
 
 It reads the channel-ID registry, resolves uploads playlists, batches details at 50 IDs/request, applies any channel-specific title filter, and saves the next-page cursor. RSMUSIC-X imports only videos whose normalized title ends in `Official karaoke`; its MV and other uploads are skipped. Each invocation imports at most 100 pages per channel; invoke again to resume. Completed channels are scanned again after seven days. A run also refreshes up to 500 catalog entries older than seven days. No media files are downloaded.
 
-On the persistent Windows/Node server, instrumentation schedules maintenance one minute after startup and every 24 hours thereafter. The server must remain running. `KARAOKE_CATALOG_AUTO_SYNC=0` disables this timer. It is not a serverless scheduler. Database leases guard each channel import; failed cleanup leases expire after five minutes.
+On Vercel, `vercel.json` invokes `/api/internal/catalog-sync` once per day and
+Vercel authenticates it with `CRON_SECRET`. The bounded job scans the newest
+playlist page for every official channel and refreshes up to 16 batches of old
+metadata. The initial full import still uses `npm run catalog:sync` locally.
+Self-hosted Node servers can retain the legacy timer; instrumentation disables
+that timer automatically when `VERCEL=1`. Database leases guard each channel
+import and failed cleanup leases expire after five minutes.
 
 Catalog-related `channels.list`, `playlistItems.list`, and `videos.list` calls share an atomic Supabase limit of 2,000 requests per Pacific calendar day. These do not use the separate Search Queries bucket, but do consume YouTube's general API quota. The application limit intentionally remains below YouTube's default 10,000-unit general-endpoint allocation so direct video details and other reads retain headroom. This limit is separate from the existing remote-search budget and is not Google's total account usage. No paid upgrade or service was enabled.
 

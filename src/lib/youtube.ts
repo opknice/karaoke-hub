@@ -448,7 +448,7 @@ async function fetchYouTubeSearch(
       /per day|daily|exceeded your.*quota/iu.test(upstreamMessage ?? '');
 
     if (isDailyQuotaExhausted) {
-      markUpstreamQuotaExhausted();
+      await markUpstreamQuotaExhausted();
       throw new YouTubeSearchError(
         SEARCH_QUOTA_EXHAUSTED_MESSAGE,
         429
@@ -507,7 +507,7 @@ async function performKaraokeSearch(normalizedQuery: string, client: string): Pr
     return fallbackResults;
   }
 
-  const stored = readStoredSearch(normalizedQuery);
+  const stored = await readStoredSearch(normalizedQuery);
   if (stored) {
     if (Date.now() - stored.updatedAt < VIDEO_DETAILS_CACHE_TTL_MS && stored.results.every((video) =>
       video.views_count === undefined || Date.now() - Date.parse(video.last_synced_at ?? '') < VIDEO_DETAILS_CACHE_TTL_MS
@@ -518,7 +518,7 @@ async function performKaraokeSearch(normalizedQuery: string, client: string): Pr
   }
   if (!normalizedQuery) return enrichAndRankCandidates(localResults, '', apiKey);
   let token: string;
-  try { token = reserveSearch(normalizedQuery, client); }
+  try { token = await reserveSearch(normalizedQuery, client); }
   catch (error: unknown) {
     if (error instanceof SearchBudgetError) throw new YouTubeSearchError(error.message, 429);
     throw new YouTubeSearchError('เปิดฐานข้อมูล Cache/งบค้นหาไม่ได้ กรุณาตรวจสอบเซิร์ฟเวอร์', 503);
@@ -526,9 +526,12 @@ async function performKaraokeSearch(normalizedQuery: string, client: string): Pr
   try {
     const youtubeResults = await fetchYouTubeSearch(normalizedQuery, apiKey);
     const results = await enrichAndRankCandidates(mergeCandidates(localResults, youtubeResults), normalizedQuery, apiKey);
-    writeStoredSearch(normalizedQuery, results);
+    await writeStoredSearch(normalizedQuery, results);
     return results;
-  } finally { releaseSearch(normalizedQuery, token); }
+  } finally {
+    try { await releaseSearch(normalizedQuery, token); }
+    catch { console.warn('Unable to release the Supabase search lease; it will expire automatically.'); }
+  }
 }
 
 export async function searchKaraokeVideos(query: string, client = 'local'): Promise<YouTubeVideo[]> {

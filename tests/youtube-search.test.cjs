@@ -1,7 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
@@ -29,16 +28,67 @@ function loader() {
 }
 
 test('persistent cache, explicit search budget, concurrency and URL handling', async () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-search-test-'));
-  process.env.YOUTUBE_SEARCH_DB_PATH = path.join(directory, 'test.sqlite');
+  const originalUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const originalKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const originalLimit = process.env.YOUTUBE_SEARCH_DAILY_LIMIT;
+  const originalYouTube = process.env.YOUTUBE_API_KEY;
+  process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://search-store-test.supabase.co';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-only';
   process.env.YOUTUBE_SEARCH_DAILY_LIMIT = '2';
   process.env.YOUTUBE_API_KEY = 'test-only';
   const originalFetch = global.fetch;
+  const cache = new Map();
+  const leases = new Map();
+  const clients = new Map();
+  let budgetUsed = 0;
+  let outage = false;
+  let tokenCounter = 0;
   let searches = 0;
   let details = 0;
   const requestedIds = [];
-  global.fetch = async (input) => {
+  global.fetch = async (input, init = {}) => {
     const url = new URL(input);
+    if (url.hostname === 'search-store-test.supabase.co') {
+      const body = init.body ? JSON.parse(init.body) : {};
+      if (url.pathname.endsWith('/karaoke_search_get_budget')) {
+        return Response.json({ used: budgetUsed, limit: 2, remaining: Math.max(0, 2 - budgetUsed),
+          warning: budgetUsed >= 1, upstreamExhausted: outage });
+      }
+      if (url.pathname.endsWith('/karaoke_search_get')) {
+        const row = cache.get(body.p_query);
+        return Response.json(row && row.expiresAt > Date.now()
+          ? [{ payload: row.payload, updated_at: new Date(row.updatedAt).toISOString() }] : []);
+      }
+      if (url.pathname.endsWith('/karaoke_search_store')) {
+        cache.set(body.p_query, { payload: body.p_payload, updatedAt: Date.now(),
+          expiresAt: Date.now() + body.p_ttl_seconds * 1000 });
+        return new Response(null, { status: 204 });
+      }
+      if (url.pathname.endsWith('/karaoke_search_reserve')) {
+        const now = Date.now();
+        if (outage) return Response.json({ ok: false, reason: 'upstream_exhausted' });
+        if (leases.has(body.p_query)) return Response.json({ ok: false, reason: 'query_in_progress' });
+        if (now - (clients.get(body.p_client) ?? 0) < 3000) {
+          return Response.json({ ok: false, reason: 'client_cooldown' });
+        }
+        if (budgetUsed >= body.p_daily_limit) return Response.json({ ok: false, reason: 'budget_exhausted' });
+        budgetUsed++;
+        clients.set(body.p_client, now);
+        const token = `00000000-0000-4000-8000-${String(++tokenCounter).padStart(12, '0')}`;
+        leases.set(body.p_query, token);
+        return Response.json({ ok: true, token });
+      }
+      if (url.pathname.endsWith('/karaoke_search_release')) {
+        if (leases.get(body.p_query) === body.p_token) leases.delete(body.p_query);
+        return new Response(null, { status: 204 });
+      }
+      if (url.pathname.endsWith('/karaoke_search_mark_outage')) {
+        outage = true;
+        return new Response(null, { status: 204 });
+      }
+      if (url.pathname.endsWith('/karaoke_search_cleanup')) return new Response(null, { status: 204 });
+      throw new Error(`Unexpected Supabase request: ${url.pathname}`);
+    }
     if (url.pathname.endsWith('/search')) {
       searches++;
       return Response.json({ items: [{ id: { videoId: 'DmftZuj-8vI' }, snippet: {
@@ -62,27 +112,25 @@ test('persistent cache, explicit search budget, concurrency and URL handling', a
     assert.equal(a.length, 1);
     assert.deepEqual(a, b);
     assert.equal(a[0].views_count, 12345);
-    assert.equal(store.getSearchBudget().used, 1);
+    assert.equal((await store.getSearchBudget()).used, 1);
 
     const restarted = loader();
     const restartedApi = restarted('src/lib/youtube.ts');
     await restartedApi.searchKaraokeVideos('ขอบฟ้า', 'client-c');
     assert.equal(searches, 1, 'database cache survives module/server restart');
-    assert.equal(restarted('src/lib/youtube-search-store.ts').getSearchBudget().used, 1);
+    assert.equal((await restarted('src/lib/youtube-search-store.ts').getSearchBudget()).used, 1);
 
     // Expire details without expiring the search: refresh statistics only.
-    const { DatabaseSync } = require('node:sqlite');
-    const database = new DatabaseSync(process.env.YOUTUBE_SEARCH_DB_PATH);
-    database.prepare('UPDATE search_cache SET updated_at=? WHERE query=?').run(Date.now() - 3_600_001, 'ขอบฟ้า');
+    cache.get('ขอบฟ้า').updatedAt = Date.now() - 3_600_001;
     const refreshed = loader();
     await refreshed('src/lib/youtube.ts').searchKaraokeVideos('ขอบฟ้า', 'client-d');
     assert.equal(searches, 1);
     assert.ok(details >= 2, 'old view counts refresh through videos.list');
 
-    const token = store.reserveSearch('different search', 'client-e');
-    assert.throws(() => store.reserveSearch('different search', 'client-f'), /กำลังดำเนินการ/);
-    store.releaseSearch('different search', token);
-    assert.equal(store.getSearchBudget().used, 2);
+    const token = await store.reserveSearch('different search', 'client-e');
+    await assert.rejects(store.reserveSearch('different search', 'client-f'), /กำลังดำเนินการ/);
+    await store.releaseSearch('different search', token);
+    assert.equal((await store.getSearchBudget()).used, 2);
     await assert.rejects(api.searchKaraokeVideos('unmatched-budget-test', 'client-g'), /ครบงบ/);
     assert.equal(searches, 1, 'budget blocks outbound requests');
 
@@ -94,14 +142,16 @@ test('persistent cache, explicit search budget, concurrency and URL handling', a
     await assert.rejects(api.searchKaraokeVideos('https://example.com/watch?v=DmftZuj-8vI', 'client-g'), /ลิงก์วิดีโอ YouTube/);
     assert.equal(searches, 1, 'invalid pasted links never consume search quota');
 
-    database.prepare('UPDATE search_budget SET used=0').run();
-    store.markUpstreamQuotaExhausted();
-    assert.throws(() => restarted('src/lib/youtube-search-store.ts').reserveSearch('new query', 'client-h'), /รายวันเต็ม/);
-    database.close();
+    budgetUsed = 0;
+    await store.markUpstreamQuotaExhausted();
+    await assert.rejects(restarted('src/lib/youtube-search-store.ts').reserveSearch('new query', 'client-h'), /รายวันเต็ม/);
   } finally {
     global.fetch = originalFetch;
-    // SQLite handles close when this isolated test process exits. The temp path
-    // is outside the project and never used by the development server.
+    for (const [name, value] of Object.entries({ NEXT_PUBLIC_SUPABASE_URL: originalUrl,
+      SUPABASE_SERVICE_ROLE_KEY: originalKey, YOUTUBE_SEARCH_DAILY_LIMIT: originalLimit,
+      YOUTUBE_API_KEY: originalYouTube })) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
   }
 });
 

@@ -9,9 +9,9 @@ export const runtime = 'nodejs';
 export async function POST(request: NextRequest) {
   const existingClient = request.cookies.get('karaoke-search-client')?.value;
   const client = existingClient && /^[a-zA-Z0-9-]{1,64}$/.test(existingClient) ? existingClient : randomUUID();
-  const reply = (body: Record<string, unknown>, status = 200) => {
-    let budget: ReturnType<typeof getSearchBudget> | undefined;
-    try { budget = getSearchBudget(); } catch { /* Keep the original storage error visible. */ }
+  const reply = async (body: Record<string, unknown>, status = 200) => {
+    let budget: Awaited<ReturnType<typeof getSearchBudget>> | undefined;
+    try { budget = await getSearchBudget(); } catch { /* Keep the original storage error visible. */ }
     const response = NextResponse.json({ ...body, budget }, { status, headers: { 'Cache-Control': 'no-store' } });
     response.cookies.set('karaoke-search-client', client, { httpOnly: true, sameSite: 'strict', path: '/', maxAge: 86400 * 30 });
     return response;

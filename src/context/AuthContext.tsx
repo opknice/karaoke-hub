@@ -18,19 +18,18 @@ const AuthContext = createContext<AuthContextType | null>(null);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [nickname, setNicknameState] = useState<string>('Singer');
-  const [isConfigured, setIsConfigured] = useState<boolean>(false);
+  const isConfigured = isSupabaseConfigured();
 
   useEffect(() => {
     // Load stored nickname
     const storedNickname = localStorage.getItem('karaoke_user_nickname');
     if (storedNickname) {
+      // Browser storage is unavailable to the server render, so hydrate it here.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setNicknameState(storedNickname);
     }
 
-    const configured = isSupabaseConfigured();
-    setIsConfigured(configured);
-
-    if (configured) {
+    if (isConfigured) {
       const supabase = getSupabaseBrowserClient();
       if (supabase) {
         supabase.auth.getUser().then(({ data: { user: authUser } }) => {
@@ -81,7 +80,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(demoUser);
       }
     }
-  }, []);
+  }, [isConfigured]);
 
   const setNickname = (name: string) => {
     const trimmed = name.trim() || 'Singer';
