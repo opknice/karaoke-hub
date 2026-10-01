@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams } from 'next/navigation';
 import { useKaraoke } from '@/context/KaraokeContext';
 import { useAuth } from '@/context/AuthContext';
+import { LyricsGoogleSearchModal } from '@/components/LyricsGoogleSearchModal';
 import { YouTubeVideo } from '@/lib/types';
 import { calculateEstimatedWait, formatDuration, formatMinutes } from '@/lib/queue-algorithm';
 import {
@@ -59,6 +60,10 @@ export default function GuestJoinPage() {
   const [justAddedIds, setJustAddedIds] = useState<Set<string>>(new Set());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isQueueDrawerOpen, setIsQueueDrawerOpen] = useState(false);
+  const [showLyricsInput, setShowLyricsInput] = useState(false);
+  const [lyricsInput, setLyricsInput] = useState('');
+  const [submittedLyricsQuery, setSubmittedLyricsQuery] = useState('');
+  const [isLyricsModalOpen, setIsLyricsModalOpen] = useState(false);
 
   const searchRequestRef = useRef<AbortController | null>(null);
   const popularSongsRequestRef = useRef<AbortController | null>(null);
@@ -283,6 +288,14 @@ export default function GuestJoinPage() {
           }
         }
       });
+  };
+
+  const handleLyricsSearch = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const query = lyricsInput.trim();
+    if (query.length < 2) return;
+    setSubmittedLyricsQuery(query);
+    setIsLyricsModalOpen(true);
   };
 
   // Add song to queue instantly with visual feedback
@@ -559,6 +572,56 @@ export default function GuestJoinPage() {
           )}
         </div>
 
+        {/* Find a song title from a remembered lyric without changing the karaoke search. */}
+        <section className="mb-6 rounded-2xl border border-violet-500/25 bg-violet-950/15 p-3.5 sm:p-4">
+          <button
+            type="button"
+            onClick={() => setShowLyricsInput((visible) => !visible)}
+            aria-expanded={showLyricsInput}
+            aria-controls="lyrics-search-form"
+            className="flex w-full items-center justify-between gap-3 text-left"
+          >
+            <span className="flex min-w-0 items-center gap-2 text-sm font-bold text-violet-200">
+              <Search className="h-4 w-4 shrink-0" />
+              รู้เนื้อ ไม่รู้ชื่อเพลง
+            </span>
+            {showLyricsInput ? (
+              <ChevronUp className="h-4 w-4 shrink-0 text-violet-300" />
+            ) : (
+              <ChevronDown className="h-4 w-4 shrink-0 text-violet-300" />
+            )}
+          </button>
+          {showLyricsInput && (
+            <form id="lyrics-search-form" onSubmit={handleLyricsSearch} className="mt-3 space-y-2.5">
+              <label htmlFor="remembered-lyrics" className="block text-xs text-zinc-400">
+                พิมพ์ท่อนเนื้อเพลงที่จำได้
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="remembered-lyrics"
+                  type="search"
+                  value={lyricsInput}
+                  onChange={(event) => setLyricsInput(event.target.value)}
+                  minLength={2}
+                  maxLength={160}
+                  placeholder="เช่น จะเหนื่อยเพียงไหน"
+                  className="min-w-0 flex-1 rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white placeholder-zinc-500 focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-500/20"
+                />
+                <button
+                  type="submit"
+                  disabled={lyricsInput.trim().length < 2}
+                  className="shrink-0 rounded-xl bg-violet-600 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  ส่ง
+                </button>
+              </div>
+              <p className="text-[11px] text-zinc-500">
+                ค้นผ่าน Google เฉพาะเว็บไซต์เนื้อเพลง • ไม่เพิ่มเพลงลงคิวอัตโนมัติ
+              </p>
+            </form>
+          )}
+        </section>
+
         {/* List Title */}
         <div className="flex items-center justify-between mb-3 px-1">
           <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-300">
@@ -713,6 +776,14 @@ export default function GuestJoinPage() {
           )}
         </div>
       </main>
+
+      {submittedLyricsQuery && (
+        <LyricsGoogleSearchModal
+          open={isLyricsModalOpen}
+          query={submittedLyricsQuery}
+          onClose={() => setIsLyricsModalOpen(false)}
+        />
+      )}
 
       {/* ==========================================
           BOTTOM STRIP: MY SONGS & QUEUE STATUS
