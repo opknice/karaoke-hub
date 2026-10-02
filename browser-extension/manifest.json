@@ -11,7 +11,7 @@
   ],
   "host_permissions": [
     "http://localhost:3000/*",
-    "https://karaoke-hub.vercel.app/*"
+    "https://karaoke-hub-nu.vercel.app/*"
   ],
   "background": {
     "service_worker": "service-worker.js",
@@ -24,7 +24,7 @@
     {
       "matches": [
         "http://localhost:3000/player*",
-        "https://karaoke-hub.vercel.app/player*"
+        "https://karaoke-hub-nu.vercel.app/*"
       ],
       "js": [
         "content-script.js"
