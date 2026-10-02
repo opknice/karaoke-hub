@@ -6,6 +6,7 @@ import { Play, Pause, SkipForward, SkipBack, Volume2, VolumeX, Maximize2, Mic, M
 import { formatDuration } from '@/lib/queue-algorithm';
 import { loadYouTubeIframeApi } from '@/lib/youtube-iframe-api';
 import { shouldMutePlayer } from '@/lib/player-keyboard';
+import { getYouTubePlaybackStartSeconds } from '@/lib/youtube-playback';
 
 interface YouTubePlayerProps {
   isDisplayMode?: boolean; // TV / Projector Display Screen
@@ -66,7 +67,6 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     setVolume,
     setIsMuted,
     skipSong,
-    previousSong,
     onSongEnd,
     handlePlaybackError,
     queue,
@@ -87,15 +87,18 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
 
   const videoId = nowPlaying?.video?.youtube_video_id || '';
   const currentItemId = nowPlaying?.id || '';
+  const playbackStartSeconds = getYouTubePlaybackStartSeconds(nowPlaying?.video?.channel_id);
   const hasVideo = videoId.length > 0;
 
   const videoIdRef = useRef(videoId);
   const currentItemIdRef = useRef(currentItemId);
+  const playbackStartSecondsRef = useRef(playbackStartSeconds);
   const fallbackDurationRef = useRef(nowPlaying?.video.duration || 210);
   const isPlayingRef = useRef(isPlaying);
   const volumeRef = useRef(volume);
   const isMutedRef = useRef(isMuted);
   const setIsPlayingRef = useRef(setIsPlaying);
+  const setCurrentTimeRef = useRef(setCurrentTime);
   const setDurationRef = useRef(setDuration);
   const onSongEndRef = useRef(onSongEnd);
   const handlePlaybackErrorRef = useRef(handlePlaybackError);
@@ -136,11 +139,13 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   useEffect(() => {
     videoIdRef.current = videoId;
     currentItemIdRef.current = currentItemId;
+    playbackStartSecondsRef.current = playbackStartSeconds;
     fallbackDurationRef.current = nowPlaying?.video.duration || 210;
     isPlayingRef.current = isPlaying;
     volumeRef.current = volume;
     isMutedRef.current = isMuted;
     setIsPlayingRef.current = setIsPlaying;
+    setCurrentTimeRef.current = setCurrentTime;
     setDurationRef.current = setDuration;
     onSongEndRef.current = onSongEnd;
     handlePlaybackErrorRef.current = handlePlaybackError;
@@ -151,6 +156,8 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     isPlaying,
     nowPlaying?.video.duration,
     onSongEnd,
+    playbackStartSeconds,
+    setCurrentTime,
     setDuration,
     setIsPlaying,
     videoId,
@@ -209,12 +216,14 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
 
             const readyVideoId = videoIdRef.current;
             if (readyVideoId) {
+              const readyStartSeconds = playbackStartSecondsRef.current;
               if (isPlayingRef.current) {
-                event.target.loadVideoById({ videoId: readyVideoId, startSeconds: 0 });
+                event.target.loadVideoById({ videoId: readyVideoId, startSeconds: readyStartSeconds });
                 verifyAutoplayStarted(event.target, currentItemIdRef.current);
               } else {
-                event.target.cueVideoById({ videoId: readyVideoId, startSeconds: 0 });
+                event.target.cueVideoById({ videoId: readyVideoId, startSeconds: readyStartSeconds });
               }
+              setCurrentTimeRef.current(readyStartSeconds);
             }
 
             setDurationRef.current(event.target.getDuration() || fallbackDurationRef.current);
@@ -308,16 +317,17 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
       // Read from latestIsPlayingRef — written on every render, always reflects the state
       // value from the same render cycle that changed videoId/currentItemId.
       if (latestIsPlayingRef.current) {
-        player.loadVideoById({ videoId, startSeconds: 0 });
+        player.loadVideoById({ videoId, startSeconds: playbackStartSeconds });
         verifyAutoplayStarted(player, currentItemId);
       } else {
-        player.cueVideoById({ videoId, startSeconds: 0 });
+        player.cueVideoById({ videoId, startSeconds: playbackStartSeconds });
       }
+      setCurrentTime(playbackStartSeconds);
       disableYouTubeCaptions(player);
     } catch (error) {
       console.error('Error loading the next video:', error);
     }
-  }, [clearAutoplayCheck, currentItemId, verifyAutoplayStarted, videoId]);
+  }, [clearAutoplayCheck, currentItemId, playbackStartSeconds, setCurrentTime, verifyAutoplayStarted, videoId]);
 
   useEffect(() => {
     return () => {
@@ -364,10 +374,11 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
       setPlayerError((currentError) => currentError?.itemId === itemId ? null : currentError);
       lastHandledItemIdRef.current = null;
       playingItemIdRef.current = itemId;
-      player.seekTo(0, true);
+      const restartAtSeconds = playbackStartSecondsRef.current;
+      player.seekTo(restartAtSeconds, true);
       disableYouTubeCaptions(player);
       player.playVideo();
-      setCurrentTime(0);
+      setCurrentTime(restartAtSeconds);
       isPlayingRef.current = true;
       setIsPlayingRef.current(true);
       verifyAutoplayStarted(player, itemId);
@@ -425,7 +436,9 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
       // This call must stay inside the click handler. Moving it to an effect loses
       // the browser user activation required for audible autoplay.
       if (player.getPlayerState() === YT.PlayerState.ENDED) {
-        player.loadVideoById({ videoId: videoIdRef.current, startSeconds: 0 });
+        const restartAtSeconds = playbackStartSecondsRef.current;
+        player.loadVideoById({ videoId: videoIdRef.current, startSeconds: restartAtSeconds });
+        setCurrentTimeRef.current(restartAtSeconds);
       } else {
         player.playVideo();
       }
@@ -573,7 +586,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <button
-                onClick={previousSong}
+                onClick={restartCurrentSong}
                 className="p-2 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition"
                 title="Previous / Restart"
               >

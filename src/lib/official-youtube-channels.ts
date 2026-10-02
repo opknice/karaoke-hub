@@ -9,11 +9,13 @@ export interface OfficialYouTubeChannel {
   readonly catalogExcludedTitleSuffixes?: readonly string[];
 }
 
+export const GMM_KARAOKE_CHANNEL_ID = 'UCHmKRqvKPYVx23RJ8uF6AtA';
+
 // Curated channel identity, not YouTube's verification badge or a claim about
 // ownership of every individual recording. Add entries only with evidence.
 export const OFFICIAL_YOUTUBE_CHANNELS: readonly OfficialYouTubeChannel[] = [
   {
-    channelId: 'UCHmKRqvKPYVx23RJ8uF6AtA',
+    channelId: GMM_KARAOKE_CHANNEL_ID,
     name: 'GMM Karaoke',
     url: 'https://www.youtube.com/@gmmkaraoke',
     evidenceUrl: 'https://techsauce.co/news/gmm-grammy-open-gmm-karaoke-on-youtube',
