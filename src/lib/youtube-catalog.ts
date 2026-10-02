@@ -170,7 +170,7 @@ export async function getTopCatalogVideos(limit = 50): Promise<YouTubeVideo[]> {
   return (await cached.promise).filter((video) => !isCatalogTitleExcluded(video));
 }
 
-export async function getPopularCatalogPage(offset: number): Promise<{
+export async function getPopularCatalogPage(offset: number, channelId: string): Promise<{
   videos: YouTubeVideo[];
   nextOffset: number;
   hasMore: boolean;
@@ -186,6 +186,7 @@ export async function getPopularCatalogPage(offset: number): Promise<{
   while (true) {
     const params = new URLSearchParams({
       select: 'payload',
+      channel_id: `eq.${channelId}`,
       expires_at: `gt.${expiresAt}`,
       'payload->>embeddable': 'eq.true',
       order: 'payload->views_count.desc,video_id.asc',

@@ -793,7 +793,7 @@ export default function GuestJoinPage() {
             ) : (
               <>
                 <Flame className="w-3.5 h-3.5 text-pink-500" />
-                <span>เพลงคาราโอเกะยอดนิยม</span>
+                <span>เพลง GMM Karaoke ยอดนิยม</span>
               </>
             )}
           </div>
@@ -810,7 +810,7 @@ export default function GuestJoinPage() {
           {!isSearchActive && loadingPopularSongs && displaySongs.length === 0 ? (
             <div className="py-12 text-center rounded-2xl bg-zinc-900/40 border border-zinc-850 p-6 space-y-3">
               <Loader2 className="w-8 h-8 text-violet-400 animate-spin mx-auto" />
-              <p className="text-sm font-semibold text-zinc-300">กำลังโหลดเพลงคาราโอเกะยอดนิยม</p>
+              <p className="text-sm font-semibold text-zinc-300">กำลังโหลดเพลง GMM Karaoke ยอดนิยม</p>
             </div>
           ) : !isSearchActive && popularSongsError ? (
             <div className="py-12 text-center rounded-2xl bg-zinc-900/40 border border-zinc-850 p-6 space-y-3">

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getPopularCatalogPage } from '@/lib/youtube-catalog';
+import { GMM_KARAOKE_CHANNEL_ID } from '@/lib/official-youtube-channels';
 
 export const runtime = 'nodejs';
 
@@ -11,7 +12,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ success: false, error: 'ตำแหน่งรายการเพลงไม่ถูกต้อง' }, { status: 400 });
   }
   try {
-    const page = await getPopularCatalogPage(Number(offsetParam));
+    const page = await getPopularCatalogPage(Number(offsetParam), GMM_KARAOKE_CHANNEL_ID);
     return NextResponse.json({
       success: true,
       data: page.videos,

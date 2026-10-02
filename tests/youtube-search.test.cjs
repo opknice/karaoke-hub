@@ -444,11 +444,12 @@ test('popular catalog pages load 50 valid songs at a time and stop at the end', 
   process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://popular-pages-test.supabase.co';
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-only';
   delete process.env.SUPABASE_SECRET_KEY;
+  const gmmChannelId = 'UCHmKRqvKPYVx23RJ8uF6AtA';
   const rows = Array.from({ length: 121 }, (_, index) => ({ payload: {
     id: `yt-${index}`,
     youtube_video_id: String(index).padStart(11, '0'),
     title: `เพลง ${index} karaoke`,
-    channel_id: 'channel', channel_name: 'Karaoke', thumbnail_url: '',
+    channel_id: gmmChannelId, channel_name: 'GMM Karaoke', thumbnail_url: '',
     duration: 180, embeddable: true, karaoke_score: 90, views_count: 121 - index,
   } }));
   rows.splice(1, 0, { payload: { invalid: true } });
@@ -457,6 +458,7 @@ test('popular catalog pages load 50 valid songs at a time and stop at the end', 
     const url = new URL(input);
     assert.equal(url.hostname, 'popular-pages-test.supabase.co');
     assert.equal(url.pathname, '/rest/v1/karaoke_catalog');
+    assert.equal(url.searchParams.get('channel_id'), `eq.${gmmChannelId}`);
     assert.equal(url.searchParams.get('order'), 'payload->views_count.desc,video_id.asc');
     requests.push(url);
     const offset = Number(url.searchParams.get('offset'));
@@ -465,9 +467,9 @@ test('popular catalog pages load 50 valid songs at a time and stop at the end', 
   };
   try {
     const catalog = loader()('src/lib/youtube-catalog.ts');
-    const first = await catalog.getPopularCatalogPage(0);
-    const second = await catalog.getPopularCatalogPage(first.nextOffset);
-    const third = await catalog.getPopularCatalogPage(second.nextOffset);
+    const first = await catalog.getPopularCatalogPage(0, gmmChannelId);
+    const second = await catalog.getPopularCatalogPage(first.nextOffset, gmmChannelId);
+    const third = await catalog.getPopularCatalogPage(second.nextOffset, gmmChannelId);
     assert.equal(first.videos.length, 50);
     assert.equal(second.videos.length, 50);
     assert.equal(third.videos.length, 21);
