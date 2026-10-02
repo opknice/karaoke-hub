@@ -30,6 +30,7 @@ import {
   type YouTubeSearchMode,
 } from '@/lib/youtube-ranking';
 import { PlayerQRGuideCard } from './PlayerQRGuideCard';
+import { LyricsGoogleSearchModal } from './LyricsGoogleSearchModal';
 
 type SearchStatus = 'idle' | 'loading' | 'success' | 'error';
 
@@ -92,12 +93,14 @@ export function PlayerSearchOverlay({
   } = useKaraoke();
   const { nickname } = useAuth();
   const inputRef = useRef<HTMLInputElement>(null);
+  const lyricsInputRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef<AbortController | null>(null);
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const volumeFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queryRef = useRef('');
   const catalogModeRef = useRef<'supabase' | 'local'>('supabase');
   const searchModeRef = useRef<YouTubeSearchMode>('song');
+  const lyricsUiActiveRef = useRef(false);
 
   const [query, setQuery] = useState('');
   const [isQueueBrowserOpen, setIsQueueBrowserOpen] = useState(false);
@@ -111,6 +114,10 @@ export function PlayerSearchOverlay({
   const [volumeFeedback, setVolumeFeedback] = useState<number | null>(null);
   const [searchSource, setSearchSource] = useState<'catalog' | 'youtube'>('catalog');
   const [localResultsActive, setLocalResultsActive] = useState(false);
+  const [showLyricsInput, setShowLyricsInput] = useState(false);
+  const [lyricsInput, setLyricsInput] = useState('');
+  const [submittedLyricsQuery, setSubmittedLyricsQuery] = useState('');
+  const [isLyricsModalOpen, setIsLyricsModalOpen] = useState(false);
   const localCatalog = useLocalCatalog((resultQuery, videos) => {
     if (catalogModeRef.current !== 'local' || queryRef.current.trim() !== resultQuery) return;
     setRawResults(videos);
@@ -148,6 +155,7 @@ export function PlayerSearchOverlay({
   }, [isQueueBrowserActive, onQueueBrowserActiveChange]);
 
   const focusSearchInput = useCallback(() => {
+    if (lyricsUiActiveRef.current) return;
     inputRef.current?.focus({ preventScroll: true });
   }, []);
 
@@ -163,8 +171,34 @@ export function PlayerSearchOverlay({
     setStatus('idle');
     setErrorMessage('');
     setLocalResultsActive(false);
+    lyricsUiActiveRef.current = false;
+    setShowLyricsInput(false);
+    setIsLyricsModalOpen(false);
     window.requestAnimationFrame(focusSearchInput);
   }, [focusSearchInput, setLocalPanelOpen]);
+
+  const toggleLyricsInput = useCallback(() => {
+    const nextVisible = !showLyricsInput;
+    lyricsUiActiveRef.current = nextVisible;
+    setShowLyricsInput(nextVisible);
+    if (!nextVisible) window.requestAnimationFrame(focusSearchInput);
+  }, [focusSearchInput, showLyricsInput]);
+
+  const handleLyricsSearch = useCallback((event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const nextQuery = lyricsInput.trim();
+    if (nextQuery.length < MIN_SEARCH_LENGTH) return;
+    lyricsUiActiveRef.current = true;
+    setSubmittedLyricsQuery(nextQuery);
+    setShowLyricsInput(false);
+    setIsLyricsModalOpen(true);
+  }, [lyricsInput]);
+
+  const closeLyricsModal = useCallback(() => {
+    lyricsUiActiveRef.current = false;
+    setIsLyricsModalOpen(false);
+    window.requestAnimationFrame(focusSearchInput);
+  }, [focusSearchInput]);
 
   const updateQuery = useCallback((value: string) => {
     requestRef.current?.abort();
@@ -308,7 +342,10 @@ export function PlayerSearchOverlay({
       if (
         target instanceof HTMLElement
         && target !== inputRef.current
-        && (target.isContentEditable || target.closest('input, textarea, select, [role="textbox"]'))
+        && (
+          target.isContentEditable
+          || target.closest('input, textarea, select, [role="textbox"], [role="dialog"], [data-player-lyrics-ui]')
+        )
       ) {
         return;
       }
@@ -398,6 +435,7 @@ export function PlayerSearchOverlay({
 
   const handlePlayerKeyDown = useCallback((event: KeyboardEvent) => {
     if (event.isComposing || event.defaultPrevented) return;
+    if (isLyricsModalOpen) return;
 
     const target = event.target;
     const isEditableTarget = target instanceof HTMLElement && Boolean(
@@ -553,6 +591,7 @@ export function PlayerSearchOverlay({
     closeSearch,
     focusSearchInput,
     isOpen,
+    isLyricsModalOpen,
     isQueueBrowserOpen,
     moveQueueSelection,
     nowPlaying,
@@ -687,7 +726,59 @@ export function PlayerSearchOverlay({
                     className="rounded-lg border border-violet-300/60 bg-violet-500/20 px-3 py-1.5 font-semibold text-violet-50 shadow-sm hover:bg-violet-500/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300 disabled:opacity-40">
                     ค้นเพิ่มบน YouTube
                   </button>
+                  <button
+                    type="button"
+                    data-player-lyrics-ui
+                    aria-expanded={showLyricsInput}
+                    aria-controls="player-lyrics-search-form"
+                    onClick={toggleLyricsInput}
+                    className="rounded-lg border border-cyan-300/50 bg-cyan-500/15 px-3 py-1.5 font-semibold text-cyan-50 shadow-sm hover:bg-cyan-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                  >
+                    รู้เนื้อ ไม่รู้ชื่อเพลง
+                  </button>
                 </div>
+                {showLyricsInput && (
+                  <form
+                    id="player-lyrics-search-form"
+                    data-player-lyrics-ui
+                    onSubmit={handleLyricsSearch}
+                    className="flex w-full flex-wrap items-center gap-2 pt-1"
+                  >
+                    <label htmlFor="player-remembered-lyrics" className="sr-only">
+                      พิมพ์ท่อนเนื้อเพลงที่จำได้
+                    </label>
+                    <input
+                      ref={lyricsInputRef}
+                      id="player-remembered-lyrics"
+                      type="search"
+                      value={lyricsInput}
+                      onChange={(event) => setLyricsInput(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'Escape') return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        lyricsUiActiveRef.current = false;
+                        setShowLyricsInput(false);
+                        window.requestAnimationFrame(focusSearchInput);
+                      }}
+                      minLength={MIN_SEARCH_LENGTH}
+                      maxLength={160}
+                      placeholder="พิมพ์ท่อนเนื้อเพลงที่จำได้"
+                      autoFocus
+                      className="min-w-[14rem] flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm font-normal text-white placeholder:text-zinc-500 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/20"
+                    />
+                    <button
+                      type="submit"
+                      disabled={lyricsInput.trim().length < MIN_SEARCH_LENGTH}
+                      className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-bold text-white hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      ค้นจากเนื้อเพลง
+                    </button>
+                    <span className="w-full text-[11px] font-normal text-zinc-500">
+                      ค้นผ่าน Google เฉพาะเว็บไซต์เนื้อเพลง • ไม่เพิ่มเพลงลงคิวอัตโนมัติ
+                    </span>
+                  </form>
+                )}
                 <span>{searchSource === 'youtube' ? 'ผลจาก YouTube / แคชคำค้น' : localCatalog.mode === 'local' && localResultsActive ? 'คลังในเครื่อง • ไม่ใช้เครือข่ายขณะพิมพ์' : 'คลังเพลง Supabase • ไม่ใช้ Search Queries'}</span>
               </div>
             )}
@@ -936,6 +1027,14 @@ export function PlayerSearchOverlay({
           <Volume2 className="h-4 w-4 text-violet-300" aria-hidden="true" />
           <span>{volumeFeedback}%</span>
         </div>
+      )}
+
+      {submittedLyricsQuery && (
+        <LyricsGoogleSearchModal
+          open={isLyricsModalOpen}
+          query={submittedLyricsQuery}
+          onClose={closeLyricsModal}
+        />
       )}
     </>
   );

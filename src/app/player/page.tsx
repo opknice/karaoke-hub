@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { QrCode, X } from 'lucide-react';
+import { Maximize2, Minimize2, QrCode, X } from 'lucide-react';
 import { PlayerSearchOverlay } from '@/components/PlayerSearchOverlay';
 import { PlayerQRGuideCard } from '@/components/PlayerQRGuideCard';
 import { PlayerVocalCutStatus } from '@/components/PlayerVocalCutStatus';
@@ -13,6 +13,8 @@ export default function PlayerPage() {
   const { activeRoom, ensureActiveRoom, nowPlaying, volume, isMuted } = useKaraoke();
   const [isQueueBrowserActive, setIsQueueBrowserActive] = useState(false);
   const [showQRQuickModal, setShowQRQuickModal] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [fullscreenError, setFullscreenError] = useState('');
   const [normalizeFeedbackPhase, setNormalizeFeedbackPhase] = useState<'hidden' | 'visible' | 'fading'>('hidden');
   const [roomSetupError, setRoomSetupError] = useState('');
   const [isRetryingRoom, setIsRetryingRoom] = useState(false);
@@ -30,6 +32,23 @@ export default function PlayerPage() {
     playerRef.current?.restartCurrentSong();
   }, []);
 
+  const togglePageFullscreen = useCallback(async () => {
+    setFullscreenError('');
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        return;
+      }
+      if (!document.fullscreenEnabled) {
+        setFullscreenError('เบราว์เซอร์นี้ไม่รองรับโหมดเต็มจอ');
+        return;
+      }
+      await document.documentElement.requestFullscreen();
+    } catch {
+      setFullscreenError('ไม่สามารถเปิดโหมดเต็มจอได้ กรุณาลองอีกครั้ง');
+    }
+  }, []);
+
   const toggleNormalizeWithFeedback = useCallback(() => {
     toggleNormalize();
     if (normalizeFadeTimerRef.current) clearTimeout(normalizeFadeTimerRef.current);
@@ -42,6 +61,24 @@ export default function PlayerPage() {
   useEffect(() => () => {
     if (normalizeFadeTimerRef.current) clearTimeout(normalizeFadeTimerRef.current);
     if (normalizeHideTimerRef.current) clearTimeout(normalizeHideTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+      setFullscreenError('');
+    };
+    const handleFullscreenError = () => {
+      setFullscreenError('ไม่สามารถเปิดโหมดเต็มจอได้ กรุณาลองอีกครั้ง');
+    };
+
+    handleFullscreenChange();
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('fullscreenerror', handleFullscreenError);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('fullscreenerror', handleFullscreenError);
+    };
   }, []);
 
   const initializeRoom = useCallback(async () => {
@@ -100,21 +137,55 @@ export default function PlayerPage() {
         </div>
       )}
 
+      <button
+        type="button"
+        onClick={() => void togglePageFullscreen()}
+        aria-label={isFullscreen ? 'ออกจากโหมดเต็มจอ' : 'แสดง Player เต็มจอ'}
+        aria-pressed={isFullscreen}
+        title={isFullscreen ? 'ออกจากโหมดเต็มจอ (Esc)' : 'แสดง Player เต็มจอ'}
+        className="fixed bottom-4 right-4 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-zinc-950/85 text-zinc-200 shadow-2xl backdrop-blur-md transition hover:border-violet-400/60 hover:bg-zinc-900 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 sm:bottom-6 sm:right-6"
+      >
+        {isFullscreen
+          ? <Minimize2 className="h-5 w-5" aria-hidden="true" />
+          : <Maximize2 className="h-5 w-5" aria-hidden="true" />}
+      </button>
+
+      {fullscreenError && (
+        <div
+          role="alert"
+          className="fixed bottom-20 right-4 z-[60] max-w-xs rounded-xl border border-rose-500/40 bg-rose-950/95 px-4 py-2.5 text-sm text-rose-100 shadow-2xl backdrop-blur-md sm:bottom-24 sm:right-6"
+        >
+          {fullscreenError}
+        </div>
+      )}
+
       {/* Ambient QR Badge on Idle */}
       {activeRoom && (
         <div className="absolute right-4 top-4 z-30 flex items-center gap-2">
+          {!isQueueBrowserActive && !showQRQuickModal && (
+            <div
+              aria-label="คีย์ลัด: Home เล่นซ้ำ, End จบเพลง, ลูกศรขึ้นลงดูเพลงในคิว"
+              className="hidden items-center gap-1.5 rounded-full border border-white/10 bg-zinc-950/75 px-3 py-2 text-[11px] text-zinc-300 shadow-xl backdrop-blur-md sm:flex"
+            >
+              <kbd className="font-mono font-semibold text-zinc-100">Home</kbd>
+              <span>เล่นซ้ำ</span>
+              <span aria-hidden="true" className="text-zinc-600">•</span>
+              <kbd className="font-mono font-semibold text-zinc-100">End</kbd>
+              <span>จบเพลง</span>
+              <span aria-hidden="true" className="text-zinc-600">•</span>
+              <kbd className="font-mono font-semibold text-zinc-100">↑↓</kbd>
+              <span>ดูเพลงในคิว</span>
+            </div>
+          )}
           <button
             type="button"
             onClick={() => setShowQRQuickModal((prev) => !prev)}
-            className="flex items-center gap-2 rounded-full border border-white/15 bg-zinc-950/80 px-3.5 py-1.5 text-xs font-semibold text-zinc-200 shadow-xl backdrop-blur-md transition hover:border-violet-400/50 hover:bg-zinc-900/90 hover:text-white"
+            aria-label={`แสดง QR Code ห้อง ${activeRoom.room_code}`}
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-zinc-950/80 text-zinc-200 shadow-xl backdrop-blur-md transition hover:border-violet-400/50 hover:bg-zinc-900/90 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
             title="คลิกเพื่อดู QR Code สแกนขอเพลงจากมือถือ"
           >
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-violet-600/40 text-violet-300">
-              <QrCode className="h-3 w-3" />
-            </span>
-            <span className="hidden sm:inline">สแกนขอเพลง</span>
-            <span className="rounded bg-violet-600/20 px-1.5 py-0.5 font-mono text-[11px] font-bold text-violet-300">
-              {activeRoom.room_code}
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-violet-600/40 text-violet-300">
+              <QrCode className="h-3.5 w-3.5" aria-hidden="true" />
             </span>
           </button>
         </div>
