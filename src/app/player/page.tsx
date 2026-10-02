@@ -142,7 +142,7 @@ export default function PlayerPage() {
         onClick={() => void togglePageFullscreen()}
         aria-label={isFullscreen ? 'ออกจากโหมดเต็มจอ' : 'แสดง Player เต็มจอ'}
         aria-pressed={isFullscreen}
-        title={isFullscreen ? 'ออกจากโหมดเต็มจอ (Esc)' : 'แสดง Player เต็มจอ'}
+        title={isFullscreen ? 'ออกจากโหมดเต็มจอ' : 'แสดง Player เต็มจอ'}
         className="fixed bottom-4 right-4 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-zinc-950/85 text-zinc-200 shadow-2xl backdrop-blur-md transition hover:border-violet-400/60 hover:bg-zinc-900 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 sm:bottom-6 sm:right-6"
       >
         {isFullscreen
@@ -164,7 +164,7 @@ export default function PlayerPage() {
         <div className="absolute right-4 top-4 z-30 flex items-center gap-2">
           {!isQueueBrowserActive && !showQRQuickModal && (
             <div
-              aria-label="คีย์ลัด: Home เล่นซ้ำ, End จบเพลง, ลูกศรขึ้นลงดูเพลงในคิว"
+              aria-label="คีย์ลัด: Home เล่นซ้ำ, End จบเพลง, ลูกศรขึ้นลงดูเพลงในคิว, F11 เต็มจอหรือลดจอ"
               className="hidden items-center gap-1.5 rounded-full border border-white/10 bg-zinc-950/75 px-3 py-2 text-[11px] text-zinc-300 shadow-xl backdrop-blur-md sm:flex"
             >
               <kbd className="font-mono font-semibold text-zinc-100">Home</kbd>
@@ -175,6 +175,9 @@ export default function PlayerPage() {
               <span aria-hidden="true" className="text-zinc-600">•</span>
               <kbd className="font-mono font-semibold text-zinc-100">↑↓</kbd>
               <span>ดูเพลงในคิว</span>
+              <span aria-hidden="true" className="text-zinc-600">•</span>
+              <kbd className="font-mono font-semibold text-zinc-100">F11</kbd>
+              <span>เต็มจอ/ลดจอ</span>
             </div>
           )}
           <button
