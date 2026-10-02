@@ -10,8 +10,10 @@ import { calculateEstimatedWait, formatDuration, formatMinutes } from '@/lib/que
 import {
   getLocalSearchPreview,
   getPopularKaraokeVideos,
+  previewCatalog,
   searchYouTubeKaraoke,
 } from '@/lib/youtube-search-client';
+import { useLocalCatalog } from '@/lib/use-local-catalog';
 import {
   Mic,
   Search,
@@ -57,6 +59,10 @@ export default function GuestJoinPage() {
   const [loadingPopularSongs, setLoadingPopularSongs] = useState(true);
   const [popularSongsError, setPopularSongsError] = useState('');
   const [popularSongsRefresh, setPopularSongsRefresh] = useState(0);
+  const [popularSongsOffset, setPopularSongsOffset] = useState(0);
+  const [hasMorePopularSongs, setHasMorePopularSongs] = useState(false);
+  const [loadingMorePopularSongs, setLoadingMorePopularSongs] = useState(false);
+  const [popularSongsMoreError, setPopularSongsMoreError] = useState('');
   const [justAddedIds, setJustAddedIds] = useState<Set<string>>(new Set());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isQueueDrawerOpen, setIsQueueDrawerOpen] = useState(false);
@@ -67,8 +73,29 @@ export default function GuestJoinPage() {
 
   const searchRequestRef = useRef<AbortController | null>(null);
   const popularSongsRequestRef = useRef<AbortController | null>(null);
+  const popularSongsEndRef = useRef<HTMLDivElement | null>(null);
   const toastTimerRef = useRef<NodeJS.Timeout | null>(null);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const searchQueryRef = useRef('');
+  const catalogModeRef = useRef<'supabase' | 'local'>('supabase');
+  const localSearchRef = useRef<(query: string) => boolean>(() => false);
+  const triggerSearchRef = useRef<(query: string) => void>(() => {});
+  const localCatalog = useLocalCatalog(
+    (query, results) => {
+      if (query !== searchQueryRef.current.trim() || catalogModeRef.current !== 'local') return;
+      setSearchResults(results);
+      setSearchSource('catalog');
+      setLoadingSearch(false);
+    },
+    () => {
+      const query = searchQueryRef.current.trim();
+      if (catalogModeRef.current === 'local' && query.length >= 2) {
+        setLoadingSearch(true);
+        localSearchRef.current(query);
+      }
+    },
+  );
+  useEffect(() => { localSearchRef.current = localCatalog.search; }, [localCatalog.search]);
 
   // Automatically mark as joined if already connected to this room
   useEffect(() => {
@@ -98,12 +125,17 @@ export default function GuestJoinPage() {
   useEffect(() => {
     if (!hasJoined) return;
 
+    popularSongsRequestRef.current?.abort();
     const controller = new AbortController();
     popularSongsRequestRef.current = controller;
 
     getPopularKaraokeVideos(controller.signal)
-      .then((videos) => {
-        if (!controller.signal.aborted) setPopularSongs(videos);
+      .then((page) => {
+        if (!controller.signal.aborted) {
+          setPopularSongs(page.videos);
+          setPopularSongsOffset(page.nextOffset);
+          setHasMorePopularSongs(page.hasMore);
+        }
       })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) {
@@ -165,11 +197,20 @@ export default function GuestJoinPage() {
     searchRequestRef.current?.abort();
 
     const cleanQuery = query.trim();
+    searchQueryRef.current = query;
     setSearchError('');
     if (cleanQuery.length < 2) {
       setSearchResults([]);
       setLoadingSearch(false);
       setSearchSource('catalog');
+      return;
+    }
+
+    if (catalogModeRef.current === 'local') {
+      setSearchResults([]);
+      setSearchSource('catalog');
+      setLoadingSearch(true);
+      if (localCatalog.ready) localCatalog.search(cleanQuery);
       return;
     }
 
@@ -184,7 +225,7 @@ export default function GuestJoinPage() {
       searchRequestRef.current = controller;
       setLoadingSearch(true);
 
-      searchYouTubeKaraoke(cleanQuery, controller.signal, 'catalog')
+      previewCatalog(cleanQuery, controller.signal)
         .then((results) => {
           if (!controller.signal.aborted) {
             setSearchResults(results);
@@ -208,11 +249,20 @@ export default function GuestJoinPage() {
         });
     }, 280);
   };
+  useEffect(() => { triggerSearchRef.current = triggerAutoCatalogSearch; });
+
+  useEffect(() => {
+    catalogModeRef.current = localCatalog.mode;
+    if (searchQueryRef.current.trim().length >= 2) {
+      triggerSearchRef.current(searchQueryRef.current);
+    }
+  }, [localCatalog.mode, localCatalog.ready]);
 
   // Fallback to YouTube on Enter when no songs in catalog
   const handleEnterSearch = async () => {
     const query = searchQuery.trim();
     if (query.length < 2) return;
+    if (catalogModeRef.current === 'local' && searchResults.length > 0 && searchSource === 'catalog') return;
 
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     searchRequestRef.current?.abort();
@@ -225,7 +275,7 @@ export default function GuestJoinPage() {
 
     // Confirm an empty catalog result before spending a YouTube Search Query.
     try {
-      const catResults = await searchYouTubeKaraoke(query, controller.signal, 'catalog');
+      const catResults = await previewCatalog(query, controller.signal);
       if (controller.signal.aborted) return;
 
       if (catResults.length > 0) {
@@ -295,6 +345,7 @@ export default function GuestJoinPage() {
     const query = lyricsInput.trim();
     if (query.length < 2) return;
     setSubmittedLyricsQuery(query);
+    setShowLyricsInput(false);
     setIsLyricsModalOpen(true);
   };
 
@@ -302,7 +353,16 @@ export default function GuestJoinPage() {
   const handleAddSong = async (video: YouTubeVideo): Promise<void> => {
     const singerName = guestName.trim() || 'Guest Singer';
     try {
-      await addToQueue(video, singerName, [singerName], '', false);
+      let currentVideo = video;
+      if (catalogModeRef.current === 'local' && searchQueryRef.current.trim().length >= 2
+        && searchSource === 'catalog') {
+        const response = await fetch(`/api/catalog/verify?id=${encodeURIComponent(video.youtube_video_id)}`, { cache: 'no-store' });
+        if (!response.ok) throw new Error('ตรวจสอบเพลงกับคลังออนไลน์ไม่สำเร็จ กรุณาลองใหม่');
+        const payload: { success?: boolean; video?: YouTubeVideo | null } = await response.json();
+        if (!payload.success || !payload.video) throw new Error('เพลงนี้ไม่มีในคลังออนไลน์แล้ว กรุณาอัปเดตคลังในเครื่อง');
+        currentVideo = payload.video;
+      }
+      await addToQueue(currentVideo, singerName, [singerName], '', false);
     } catch (error) {
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
       setToastMessage(error instanceof Error ? error.message : 'ไม่สามารถเพิ่มเพลงได้');
@@ -343,12 +403,46 @@ export default function GuestJoinPage() {
     toastTimerRef.current = setTimeout(() => setToastMessage(null), 2500);
   };
 
-  // List to display: search results while searching, otherwise the top 50
-  // cached karaoke videos by YouTube view count.
+  // Search results and the paginated popular catalog are separate lists.
   const isSearchActive = searchQuery.trim().length >= 2;
   const displaySongs: YouTubeVideo[] = isSearchActive
     ? searchResults
     : popularSongs;
+
+  useEffect(() => {
+    const end = popularSongsEndRef.current;
+    if (!hasJoined || isSearchActive || !end || !hasMorePopularSongs
+      || loadingPopularSongs || loadingMorePopularSongs || popularSongsMoreError) return;
+
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting || popularSongsRequestRef.current) return;
+      const controller = new AbortController();
+      popularSongsRequestRef.current = controller;
+      setLoadingMorePopularSongs(true);
+      getPopularKaraokeVideos(controller.signal, popularSongsOffset)
+        .then((page) => {
+          if (controller.signal.aborted) return;
+          setPopularSongs((current) => {
+            const ids = new Set(current.map((video) => video.youtube_video_id));
+            return [...current, ...page.videos.filter((video) => !ids.has(video.youtube_video_id))];
+          });
+          setPopularSongsOffset(page.nextOffset);
+          setHasMorePopularSongs(page.hasMore);
+        })
+        .catch((error: unknown) => {
+          if (!controller.signal.aborted) setPopularSongsMoreError(
+            error instanceof Error ? error.message : 'โหลดเพลงเพิ่มเติมไม่สำเร็จ กรุณาลองใหม่'
+          );
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLoadingMorePopularSongs(false);
+          if (popularSongsRequestRef.current === controller) popularSongsRequestRef.current = null;
+        });
+    }, { rootMargin: '0px 0px 300px 0px' });
+    observer.observe(end);
+    return () => observer.disconnect();
+  }, [hasJoined, isSearchActive, hasMorePopularSongs, loadingPopularSongs,
+    loadingMorePopularSongs, popularSongsMoreError, popularSongsOffset]);
 
   const formatViewCount = (views: number): string => new Intl.NumberFormat('th-TH', {
     notation: 'compact',
@@ -588,12 +682,71 @@ export default function GuestJoinPage() {
             </div>
           </div>
 
+          <div className="flex items-center justify-between gap-2 px-1 text-[11px]">
+            <div className="inline-flex rounded-lg border border-zinc-800 bg-zinc-900 p-0.5" aria-label="แหล่งค้นเพลง">
+              <button type="button" aria-pressed={localCatalog.mode === 'supabase'}
+                onClick={localCatalog.chooseSupabase}
+                className={`rounded-md px-2.5 py-1.5 transition ${localCatalog.mode === 'supabase' ? 'bg-violet-700 text-white' : 'text-zinc-400 hover:text-white'}`}>
+                Supabase
+              </button>
+              <button type="button" aria-pressed={localCatalog.mode === 'local'}
+                onClick={localCatalog.chooseLocal}
+                className={`rounded-md px-2.5 py-1.5 transition ${localCatalog.mode === 'local' ? 'bg-violet-700 text-white' : 'text-zinc-400 hover:text-white'}`}>
+                ในเครื่อง
+              </button>
+            </div>
+            <button type="button" onClick={() => localCatalog.setPanelOpen(!localCatalog.panelOpen)}
+              className="text-violet-300 hover:text-violet-200">
+              จัดการคลังในเครื่อง
+            </button>
+          </div>
+
+          {localCatalog.panelOpen && (
+            <section className="rounded-xl border border-violet-500/30 bg-zinc-900/90 p-3 space-y-2 text-xs text-zinc-300" aria-label="จัดการคลังในเครื่อง">
+              <p className="font-semibold text-white">คลังเพลงในเครื่อง</p>
+              <p>เก็บเฉพาะข้อมูลชื่อเพลงและข้อมูลค้นหาในเบราว์เซอร์เครื่องนี้ ไม่ดาวน์โหลดเสียง วิดีโอ หรือรูปปก เพลงยังต้องใช้อินเทอร์เน็ตเพื่อเข้าคิวและเล่น</p>
+              <p className="text-zinc-400">จำนวนเพลงและขนาดดาวน์โหลดขึ้นอยู่กับคลังปัจจุบันและการคัดกรอง อาจใช้พื้นที่หลาย MB</p>
+              {localCatalog.meta && (
+                <>
+                  <p className="text-violet-300">
+                    มี {localCatalog.meta.count.toLocaleString('th-TH')} เพลง · อัปเดต {new Date(localCatalog.meta.updatedAt).toLocaleString('th-TH')}
+                  </p>
+                  {localCatalog.stale && (
+                    <p className="text-amber-300">ข้อมูลอาจล้าสมัย กด “อัปเดตคลัง” เพื่อรับเพลงล่าสุด</p>
+                  )}
+                </>
+              )}
+              {localCatalog.busy === 'loading' && <p>กำลังเตรียมดัชนีค้นหา...</p>}
+              {localCatalog.busy === 'downloading' && <p>ดาวน์โหลดแล้ว {localCatalog.progress.toLocaleString('th-TH')} เพลง...</p>}
+              {localCatalog.error && <p role="alert" className="text-rose-400">{localCatalog.error}</p>}
+              <div className="flex flex-wrap gap-2">
+                {localCatalog.busy === 'downloading' ? (
+                  <button type="button" onClick={localCatalog.cancelDownload} className="rounded-lg border border-zinc-700 px-3 py-1.5 hover:bg-zinc-800">ยกเลิก</button>
+                ) : (
+                  <button type="button" disabled={localCatalog.busy !== null} onClick={() => void localCatalog.download()}
+                    className="rounded-lg bg-violet-700 px-3 py-1.5 font-semibold text-white hover:bg-violet-600 disabled:opacity-50">
+                    {localCatalog.meta ? 'อัปเดตคลัง' : 'ดาวน์โหลดคลัง'}
+                  </button>
+                )}
+                {localCatalog.meta && (
+                  <button type="button" disabled={localCatalog.busy !== null}
+                    onClick={() => { if (window.confirm('ลบข้อมูลเพลงในเครื่องนี้ทั้งหมด?')) void localCatalog.remove(); }}
+                    className="rounded-lg border border-rose-800 px-3 py-1.5 text-rose-300 hover:bg-rose-950 disabled:opacity-50">
+                    ลบข้อมูลในเครื่อง
+                  </button>
+                )}
+              </div>
+            </section>
+          )}
+
           {/* Sub-bar: Hint and YouTube button */}
           <div className="flex items-center justify-between text-xs px-1 text-zinc-400 min-h-[26px]">
             <span className="text-[11px] text-zinc-500">
               {searchSource === 'youtube'
                 ? 'กำลังแสดงผลการค้นหาจาก YouTube'
-                : 'ค้นในคลังอัตโนมัติ • กด Enter ค้นหา YouTube เมื่อไม่พบ'}
+                : localCatalog.mode === 'local'
+                  ? localCatalog.ready ? 'ค้นจากข้อมูลในเครื่องทันที • กด Enter ตรวจออนไลน์เมื่อไม่พบ' : 'กำลังเตรียมคลังในเครื่อง...'
+                  : 'ค้นในคลังอัตโนมัติ • กด Enter ค้นหา YouTube เมื่อไม่พบ'}
             </span>
 
             {isSearchActive && (
@@ -633,7 +786,7 @@ export default function GuestJoinPage() {
                   </span>
                 ) : (
                   <span className="ml-1 px-1.5 py-0.2 rounded-md bg-violet-950/60 border border-violet-500/30 text-violet-300 text-[10px] font-bold">
-                    ในคลัง
+                    {localCatalog.mode === 'local' ? 'ในเครื่อง' : 'ในคลัง'}
                   </span>
                 )}
               </>
@@ -647,7 +800,7 @@ export default function GuestJoinPage() {
 
           {!isSearchActive && (
             <span className="text-[11px] text-zinc-500">
-              {loadingPopularSongs ? 'กำลังโหลด...' : 'ยอดวิวสูงสุด 50 รายการ'}
+              {loadingPopularSongs ? 'กำลังโหลด...' : `ยอดวิวสูงสุด ${popularSongs.length} รายการ`}
             </span>
           )}
         </div>
@@ -669,6 +822,10 @@ export default function GuestJoinPage() {
                 onClick={() => {
                   setLoadingPopularSongs(true);
                   setPopularSongsError('');
+                  setPopularSongsMoreError('');
+                  setPopularSongs([]);
+                  setPopularSongsOffset(0);
+                  setHasMorePopularSongs(false);
                   setPopularSongsRefresh((value) => value + 1);
                 }}
                 className="mt-2 py-2 px-4 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-xs active:scale-[0.98] transition"
@@ -771,6 +928,23 @@ export default function GuestJoinPage() {
             })
           )}
         </div>
+        {!isSearchActive && popularSongs.length > 0 && (
+          <div ref={popularSongsEndRef} className="py-5 text-center text-xs text-zinc-500" aria-live="polite">
+            {loadingMorePopularSongs ? (
+              <span className="inline-flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" /> กำลังโหลดเพลงเพิ่มเติม...
+              </span>
+            ) : popularSongsMoreError ? (
+              <div className="space-y-2">
+                <p>{popularSongsMoreError}</p>
+                <button type="button" onClick={() => setPopularSongsMoreError('')}
+                  className="px-3 py-2 rounded-lg bg-zinc-800 text-white hover:bg-zinc-700">
+                  ลองใหม่
+                </button>
+              </div>
+            ) : !hasMorePopularSongs ? 'แสดงเพลงยอดนิยมทั้งหมดแล้ว' : null}
+          </div>
+        )}
       </main>
 
       {submittedLyricsQuery && (

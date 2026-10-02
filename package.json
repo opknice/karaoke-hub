@@ -12,7 +12,10 @@
     "test:room-api": "node --env-file=.env.local scripts/test-room-api.mjs",
     "test:queue-realtime": "node --env-file=.env.local scripts/test-queue-realtime.mjs",
     "lint": "eslint",
-    "catalog:sync": "node --env-file=.env.local scripts/sync-catalog.cjs"
+    "extension:check": "node scripts/verify-extension.mjs",
+    "catalog:sync": "node --env-file=.env.local scripts/sync-catalog.cjs",
+    "catalog:sync-rose-instrumental": "node --env-file=.env.local scripts/sync-rose-instrumental-catalog.cjs",
+    "catalog:scan-rose-instrumental": "node --env-file=.env.local scripts/scan-rose-instrumental-uploads.cjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

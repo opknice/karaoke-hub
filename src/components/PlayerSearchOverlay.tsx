@@ -13,7 +13,9 @@ import { useAuth } from '@/context/AuthContext';
 import { useKaraoke } from '@/context/KaraokeContext';
 import { formatDuration } from '@/lib/queue-algorithm';
 import type { YouTubeVideo } from '@/lib/types';
-import { searchPlayerKaraoke, getLocalSearchPreview, isDirectVideoQuery } from '@/lib/youtube-search-client';
+import { searchPlayerKaraoke, getLocalSearchPreview, isDirectVideoQuery, previewCatalog } from '@/lib/youtube-search-client';
+import { useLocalCatalog } from '@/lib/use-local-catalog';
+import { isYouTubeVideo } from '@/lib/youtube-video-validation';
 import { SearchBudgetNotice } from './SearchBudgetNotice';
 import { OfficialChannelBadge } from './OfficialChannelBadge';
 import { useCatalogPreview } from '@/lib/use-catalog-preview';
@@ -93,6 +95,9 @@ export function PlayerSearchOverlay({
   const requestRef = useRef<AbortController | null>(null);
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const volumeFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queryRef = useRef('');
+  const catalogModeRef = useRef<'supabase' | 'local'>('supabase');
+  const searchModeRef = useRef<YouTubeSearchMode>('song');
 
   const [query, setQuery] = useState('');
   const [isQueueBrowserOpen, setIsQueueBrowserOpen] = useState(false);
@@ -105,14 +110,27 @@ export function PlayerSearchOverlay({
   const [successMessage, setSuccessMessage] = useState('');
   const [volumeFeedback, setVolumeFeedback] = useState<number | null>(null);
   const [searchSource, setSearchSource] = useState<'catalog' | 'youtube'>('catalog');
+  const [localResultsActive, setLocalResultsActive] = useState(false);
+  const localCatalog = useLocalCatalog((resultQuery, videos) => {
+    if (catalogModeRef.current !== 'local' || queryRef.current.trim() !== resultQuery) return;
+    setRawResults(videos);
+    setSelectedIndex(-1);
+    setStatus('idle');
+    setLocalResultsActive(true);
+    setSearchSource('catalog');
+  }, () => {});
+  const searchLocalCatalog = localCatalog.search;
+  const cancelLocalSearch = localCatalog.cancelSearch;
+  const setLocalPanelOpen = localCatalog.setPanelOpen;
   const receivePreview = useCallback((videos: YouTubeVideo[]) => {
+    if (catalogModeRef.current !== 'supabase') return;
     setRawResults(videos);
     setSelectedIndex(-1);
   }, []);
-  const catalogError = useCatalogPreview(query, status === 'idle', receivePreview);
+  const catalogError = useCatalogPreview(query, localCatalog.initialized && status === 'idle' && localCatalog.mode === 'supabase', receivePreview);
 
   const trimmedQuery = query.trim();
-  const isOpen = query.length > 0;
+  const isOpen = query.length > 0 || localCatalog.panelOpen || localCatalog.busy === 'downloading';
   const isQueueBrowserActive = isQueueBrowserOpen && !isOpen;
   const selectedQueueItem =
     queue.find((item) => item.id === selectedQueueItemId) ?? queue[0] ?? null;
@@ -135,27 +153,64 @@ export function PlayerSearchOverlay({
 
   const closeSearch = useCallback(() => {
     requestRef.current?.abort();
+    queryRef.current = '';
     setQuery('');
+    setLocalPanelOpen(false);
     setIsQueueBrowserOpen(false);
     setSelectedQueueItemId(null);
     setRawResults([]);
     setSelectedIndex(0);
     setStatus('idle');
     setErrorMessage('');
+    setLocalResultsActive(false);
     window.requestAnimationFrame(focusSearchInput);
-  }, [focusSearchInput]);
+  }, [focusSearchInput, setLocalPanelOpen]);
 
   const updateQuery = useCallback((value: string) => {
     requestRef.current?.abort();
+    queryRef.current = value;
     setQuery(value);
     setIsQueueBrowserOpen(false);
     setSelectedQueueItemId(null);
     setSelectedIndex(-1);
     setErrorMessage('');
-    setRawResults(getLocalSearchPreview(value));
+    setLocalResultsActive(false);
+    if (catalogModeRef.current === 'local') {
+      setRawResults([]);
+      if (value.trim().length >= MIN_SEARCH_LENGTH && !isDirectVideoQuery(value)) {
+        searchLocalCatalog(value.trim(), searchModeRef.current);
+      }
+    } else {
+      setRawResults(getLocalSearchPreview(value));
+    }
     setStatus('idle');
     setSearchSource('catalog');
-  }, []);
+  }, [searchLocalCatalog]);
+
+  useEffect(() => {
+    const previous = catalogModeRef.current;
+    catalogModeRef.current = localCatalog.mode;
+    if (previous === localCatalog.mode && !(localCatalog.mode === 'local' && localCatalog.ready)) return;
+    const timer = window.setTimeout(() => {
+      requestRef.current?.abort();
+      setStatus('idle');
+      setSelectedIndex(-1);
+      setLocalResultsActive(false);
+      setSearchSource('catalog');
+      const currentQuery = queryRef.current.trim();
+      if (currentQuery.length < MIN_SEARCH_LENGTH) {
+        setRawResults([]);
+      } else if (localCatalog.mode === 'local') {
+        setRawResults([]);
+        if (localCatalog.ready && !isDirectVideoQuery(currentQuery)) {
+          searchLocalCatalog(currentQuery, searchModeRef.current);
+        }
+      } else {
+        setRawResults(getLocalSearchPreview(currentQuery));
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [localCatalog.mode, localCatalog.ready, searchLocalCatalog]);
 
   const openQueueBrowser = useCallback((direction: 'up' | 'down') => {
     const initialItem = direction === 'down' ? queue[0] : queue[queue.length - 1];
@@ -201,7 +256,16 @@ export function PlayerSearchOverlay({
   const addSelectedVideo = useCallback(
     async (video: YouTubeVideo): Promise<void> => {
       try {
-        await addToQueue(video, nickname, [nickname]);
+        let verifiedVideo = video;
+        if (localResultsActive && localCatalog.mode === 'local') {
+          const response = await fetch(`/api/catalog/verify?id=${encodeURIComponent(video.youtube_video_id)}`, { cache: 'no-store' });
+          const payload: unknown = await response.json();
+          if (!response.ok || !payload || typeof payload !== 'object' || !('video' in payload) || !isYouTubeVideo(payload.video)) {
+            throw new Error('เพลงนี้ไม่อยู่ในคลังออนไลน์แล้ว กรุณาค้นหาใหม่');
+          }
+          verifiedVideo = payload.video;
+        }
+        await addToQueue(verifiedVideo, nickname, [nickname]);
         setSuccessMessage(`เพิ่ม “${video.title}” เข้าคิวแล้ว`);
         closeSearch();
 
@@ -215,7 +279,7 @@ export function PlayerSearchOverlay({
         setErrorMessage(error instanceof Error ? error.message : 'ไม่สามารถเพิ่มเพลงได้');
       }
     },
-    [addToQueue, closeSearch, nickname]
+    [addToQueue, closeSearch, nickname, localResultsActive, localCatalog.mode]
   );
 
   const activateQueueItem = useCallback(
@@ -266,14 +330,44 @@ export function PlayerSearchOverlay({
 
     if (normalizedQuery.length < MIN_SEARCH_LENGTH) return;
 
+    if (source === 'catalog' && localCatalog.mode === 'local' && !isDirectVideoQuery(normalizedQuery)) {
+      if (localResultsActive && rawResults.length > 0) {
+        setSelectedIndex(0);
+        setStatus('success');
+        return;
+      }
+      if (!localCatalog.ready) {
+        setStatus('error');
+        setErrorMessage('คลังในเครื่องยังไม่พร้อม กรุณารอสักครู่หรือเลือก Supabase');
+        return;
+      }
+    }
+
     const controller = new AbortController();
     requestRef.current = controller;
+    cancelLocalSearch();
     setStatus('loading');
     setSearchSource(source);
     setErrorMessage('');
     try {
+      let onlineSource = source;
+      if (source === 'catalog' && localCatalog.mode === 'local' && !isDirectVideoQuery(normalizedQuery)) {
+        const catalogVideos = await previewCatalog(normalizedQuery, controller.signal);
+        if (controller.signal.aborted) return;
+        if (catalogVideos.length > 0) {
+          setRawResults(catalogVideos);
+          setLocalResultsActive(false);
+          setSelectedIndex(0);
+          setSearchSource('catalog');
+          setStatus('success');
+          return;
+        }
+        onlineSource = 'youtube';
+        setSearchSource('youtube');
+        setRawResults([]);
+      }
       const { videos, source: resultSource } = await searchPlayerKaraoke(
-        normalizedQuery, controller.signal, source, () => {
+        normalizedQuery, controller.signal, onlineSource, () => {
           setSearchSource('youtube');
           setRawResults([]);
         }
@@ -281,6 +375,7 @@ export function PlayerSearchOverlay({
       if (controller.signal.aborted) return;
 
       setRawResults(videos);
+      setLocalResultsActive(false);
       setSelectedIndex(0);
       setSearchSource(resultSource);
       setStatus('success');
@@ -291,7 +386,7 @@ export function PlayerSearchOverlay({
     } finally {
       if (requestRef.current === controller) requestRef.current = null;
     }
-  }, [query]);
+  }, [query, localCatalog.mode, localCatalog.ready, cancelLocalSearch, localResultsActive, rawResults.length]);
 
   useEffect(() => {
     return () => {
@@ -515,13 +610,69 @@ export function PlayerSearchOverlay({
                 aria-activedescendant={activeDescendantId}
               />
               <button type="button" aria-label="สลับการเรียงตามชื่อเพลงหรือศิลปิน" onClick={() => {
-                setMode((current) => current === 'song' ? 'artist' : 'song');
+                const nextMode = mode === 'song' ? 'artist' : 'song';
+                searchModeRef.current = nextMode;
+                setMode(nextMode);
                 setSelectedIndex(-1);
+                if (localCatalog.mode === 'local' && trimmedQuery.length >= MIN_SEARCH_LENGTH && !isDirectVideoQuery(trimmedQuery)) {
+                  setRawResults([]);
+                  setLocalResultsActive(false);
+                  setStatus('idle');
+                  localCatalog.search(trimmedQuery, nextMode);
+                }
               }} className="shrink-0 rounded-lg border border-violet-400/30 bg-violet-500/15 px-2.5 py-1 text-xs font-bold text-violet-200">
                 {mode === 'song' ? 'ชื่อเพลง' : 'ศิลปิน'}
               </button>
-              <button type="button" disabled={status === 'loading'} onClick={() => void submitSearch()} className="rounded-lg bg-violet-600 px-3 py-2 text-sm text-white disabled:opacity-50">ค้นในคลัง</button>
+              <button type="button" disabled={status === 'loading'} onClick={() => void submitSearch()} className="rounded-lg bg-violet-600 px-3 py-2 text-sm text-white disabled:opacity-50">{localCatalog.mode === 'local' ? 'ค้นในเครื่อง' : 'ค้นในคลัง'}</button>
             </div>
+
+            {isOpen && (
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3 text-xs">
+                <div className="inline-flex rounded-lg border border-zinc-700 bg-zinc-900 p-0.5" role="group" aria-label="แหล่งค้นเพลง">
+                  <button type="button" aria-pressed={localCatalog.mode === 'supabase'} onClick={localCatalog.chooseSupabase}
+                    className={`rounded-md px-2.5 py-1.5 ${localCatalog.mode === 'supabase' ? 'bg-violet-700 text-white' : 'text-zinc-400 hover:text-white'}`}>
+                    Supabase
+                  </button>
+                  <button type="button" aria-pressed={localCatalog.mode === 'local'} onClick={localCatalog.chooseLocal}
+                    className={`rounded-md px-2.5 py-1.5 ${localCatalog.mode === 'local' ? 'bg-violet-700 text-white' : 'text-zinc-400 hover:text-white'}`}>
+                    ในเครื่อง
+                  </button>
+                </div>
+                <button type="button" onClick={() => localCatalog.setPanelOpen(!localCatalog.panelOpen)}
+                  className="text-violet-300 hover:text-violet-200">จัดการคลังในเครื่อง</button>
+              </div>
+            )}
+
+            {localCatalog.panelOpen && (
+              <section className="mt-3 space-y-2 rounded-xl border border-violet-500/30 bg-zinc-900/90 p-3 text-xs text-zinc-300" aria-label="จัดการคลังในเครื่อง">
+                <p className="font-semibold text-white">คลังเพลงในเครื่อง</p>
+                <p>เก็บเฉพาะข้อมูลชื่อเพลงและข้อมูลค้นหาในเบราว์เซอร์เครื่องนี้ ไม่ดาวน์โหลดเสียง วิดีโอ หรือรูปปก เพลงยังต้องใช้อินเทอร์เน็ตเพื่อเข้าคิวและเล่น</p>
+                <p className="text-zinc-400">จำนวนเพลงและขนาดดาวน์โหลดขึ้นอยู่กับคลังปัจจุบันและการคัดกรอง อาจใช้พื้นที่หลาย MB</p>
+                {localCatalog.meta && (
+                  <p className="text-violet-300">มี {localCatalog.meta.count.toLocaleString('th-TH')} เพลง · อัปเดต {new Date(localCatalog.meta.updatedAt).toLocaleString('th-TH')}{localCatalog.stale ? ' · ควรอัปเดต' : ''}</p>
+                )}
+                {localCatalog.busy === 'loading' && <p>กำลังเตรียมดัชนีค้นหา...</p>}
+                {localCatalog.busy === 'downloading' && <p>ดาวน์โหลดแล้ว {localCatalog.progress.toLocaleString('th-TH')} เพลง...</p>}
+                {localCatalog.error && <p role="alert" className="text-rose-400">{localCatalog.error}</p>}
+                <div className="flex flex-wrap gap-2">
+                  {localCatalog.busy === 'downloading' ? (
+                    <button type="button" onClick={localCatalog.cancelDownload} className="rounded-lg border border-zinc-700 px-3 py-1.5 hover:bg-zinc-800">ยกเลิก</button>
+                  ) : (
+                    <button type="button" disabled={localCatalog.busy !== null} onClick={() => void localCatalog.download()}
+                      className="rounded-lg bg-violet-700 px-3 py-1.5 font-semibold text-white hover:bg-violet-600 disabled:opacity-50">
+                      {localCatalog.meta ? 'อัปเดตคลัง' : 'ดาวน์โหลดคลัง'}
+                    </button>
+                  )}
+                  {localCatalog.meta && (
+                    <button type="button" disabled={localCatalog.busy !== null}
+                      onClick={() => { if (window.confirm('ลบข้อมูลเพลงในเครื่องนี้ทั้งหมด?')) void localCatalog.remove(); }}
+                      className="rounded-lg border border-rose-800 px-3 py-1.5 text-rose-300 hover:bg-rose-950 disabled:opacity-50">
+                      ลบข้อมูลในเครื่อง
+                    </button>
+                  )}
+                </div>
+              </section>
+            )}
 
             {isOpen && (
               <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-white/10 pt-3 text-[11px] text-zinc-400 sm:text-xs">
@@ -537,12 +688,12 @@ export function PlayerSearchOverlay({
                     ค้นเพิ่มบน YouTube
                   </button>
                 </div>
-                <span>{searchSource === 'youtube' ? 'ผลจาก YouTube / แคชคำค้น' : 'คลังเพลง Supabase • ไม่ใช้ Search Queries'}</span>
+                <span>{searchSource === 'youtube' ? 'ผลจาก YouTube / แคชคำค้น' : localCatalog.mode === 'local' && localResultsActive ? 'คลังในเครื่อง • ไม่ใช้เครือข่ายขณะพิมพ์' : 'คลังเพลง Supabase • ไม่ใช้ Search Queries'}</span>
               </div>
             )}
           </div>
           <SearchBudgetNotice />
-          {catalogError && <p role="status" className="mt-2 text-xs text-amber-200">{catalogError}</p>}
+          {localCatalog.mode === 'supabase' && catalogError && <p role="status" className="mt-2 text-xs text-amber-200">{catalogError}</p>}
 
           {isOpen && (
             <div className="mt-3 grid grid-cols-1 items-start gap-4 lg:grid-cols-12">
@@ -553,7 +704,7 @@ export function PlayerSearchOverlay({
                 aria-label="ผลการค้นหาเพลง"
               >
               {status === 'idle' && trimmedQuery.length >= MIN_SEARCH_LENGTH && (
-                <p className="px-5 py-3 text-center text-sm text-zinc-400">ค้นในคลังขณะพิมพ์ • ↑↓ หรือคลิกเลือกเพลง • กด Enter เพื่อค้นต่อบน YouTube เมื่อไม่พบในคลัง</p>
+                <p className="px-5 py-3 text-center text-sm text-zinc-400">{localCatalog.mode === 'local' ? 'ค้นในเครื่องขณะพิมพ์' : 'ค้นในคลังขณะพิมพ์'} • ↑↓ หรือคลิกเลือกเพลง • กด Enter เพื่อค้นต่อบน YouTube เมื่อไม่พบในคลัง</p>
               )}
               {trimmedQuery.length < MIN_SEARCH_LENGTH && (
                 <div className="px-5 py-6 text-center text-sm text-zinc-400" role="status">

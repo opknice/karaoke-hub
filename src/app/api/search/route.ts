@@ -3,6 +3,7 @@ import { searchKaraokeVideos, YouTubeSearchError } from '@/lib/youtube';
 import { getSearchBudget } from '@/lib/youtube-search-store';
 import { randomUUID } from 'node:crypto';
 import { saveCatalogVideos, searchCatalogWithRefresh } from '@/lib/youtube-catalog';
+import { isOfficialChannelTitleExcluded } from '@/lib/official-youtube-channels';
 
 export const runtime = 'nodejs';
 
@@ -29,7 +30,9 @@ export async function POST(request: NextRequest) {
       const { videos, warning } = await searchCatalogWithRefresh(query);
       return reply({ success: true, count: videos.length, data: videos, source, warning });
     }
-    const results = await searchKaraokeVideos(query, client);
+    const results = (await searchKaraokeVideos(query, client)).filter((video) => (
+      !isOfficialChannelTitleExcluded(video.channel_id, video.title)
+    ));
     let warning: string | undefined;
     try { await saveCatalogVideos(results); }
     catch { warning = 'แสดงผลได้ แต่ยังบันทึกเพลงลงคลัง Supabase ไม่สำเร็จ'; }

@@ -1,5 +1,8 @@
 import type { YouTubeVideo } from './types';
-import { getOfficialYouTubeChannel } from './official-youtube-channels';
+import {
+  getOfficialYouTubeChannel,
+  isOfficialChannelTitleExcluded,
+} from './official-youtube-channels';
 
 export type YouTubeSearchMode = 'song' | 'artist';
 
@@ -113,6 +116,7 @@ export function getSearchRelevanceTier(
 
 export function getKaraokeTier(video: YouTubeVideo): number {
   if (!video.embeddable) return 0;
+  if (isOfficialChannelTitleExcluded(video.channel_id, video.title)) return 0;
 
   const title = normalizeYouTubeSearchText(video.title);
   const channel = normalizeYouTubeSearchText(video.channel_name);
@@ -138,23 +142,39 @@ export function rankKaraokeVideos(
   mode: YouTubeSearchMode = 'song',
   preserveSearchMatches = false
 ): YouTubeVideo[] {
-  return videos
+  const ranked: {
+    video: YouTubeVideo;
+    originalIndex: number;
+    relevance: number;
+    official: number;
+    karaokeTier: number;
+  }[] = [];
+
+  for (const video of videos) {
     // Upstream relevance can match lyrics/description absent from the title.
     // Local suggestions must still match text; they have no upstream evidence.
-    .filter((video) => preserveSearchMatches || getSearchRelevanceTier(video, query, mode) > 0)
-    .filter((video) => getKaraokeTier(video) > 0)
-    .map((video, originalIndex) => ({ video, originalIndex }))
+    const relevance = getSearchRelevanceTier(video, query, mode);
+    if (!preserveSearchMatches && relevance <= 0) continue;
+    const karaokeTier = getKaraokeTier(video);
+    if (karaokeTier <= 0) continue;
+    ranked.push({
+      video,
+      originalIndex: ranked.length,
+      relevance,
+      official: Number(Boolean(getOfficialYouTubeChannel(video.channel_id))),
+      karaokeTier,
+    });
+  }
+
+  return ranked
     .sort((left, right) => {
-      const relevanceDifference =
-        getSearchRelevanceTier(right.video, query, mode) -
-        getSearchRelevanceTier(left.video, query, mode);
+      const relevanceDifference = right.relevance - left.relevance;
       if (relevanceDifference !== 0) return relevanceDifference;
 
-      const officialDifference = Number(Boolean(getOfficialYouTubeChannel(right.video.channel_id)))
-        - Number(Boolean(getOfficialYouTubeChannel(left.video.channel_id)));
+      const officialDifference = right.official - left.official;
       if (officialDifference !== 0) return officialDifference;
 
-      const karaokeDifference = getKaraokeTier(right.video) - getKaraokeTier(left.video);
+      const karaokeDifference = right.karaokeTier - left.karaokeTier;
       if (karaokeDifference !== 0) return karaokeDifference;
 
       const leftHasViews = left.video.views_count !== undefined;

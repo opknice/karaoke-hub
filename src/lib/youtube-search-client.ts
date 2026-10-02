@@ -169,8 +169,12 @@ export async function previewCatalog(query: string, signal: AbortSignal): Promis
   return parseSearchResponse(payload).data;
 }
 
-export async function getPopularKaraokeVideos(signal: AbortSignal): Promise<YouTubeVideo[]> {
-  const response = await fetch('/api/catalog/popular', { signal, cache: 'no-store' });
+export async function getPopularKaraokeVideos(signal: AbortSignal, offset = 0): Promise<{
+  videos: YouTubeVideo[];
+  nextOffset: number;
+  hasMore: boolean;
+}> {
+  const response = await fetch(`/api/catalog/popular?offset=${offset}`, { signal, cache: 'no-store' });
   const payload: unknown = await response.json();
   if (!response.ok) {
     const message = isRecord(payload) && typeof payload.error === 'string'
@@ -178,5 +182,9 @@ export async function getPopularKaraokeVideos(signal: AbortSignal): Promise<YouT
       : 'คลังเพลงยอดนิยมยังไม่พร้อมใช้งาน กรุณาลองใหม่';
     throw new Error(message);
   }
-  return parseSearchResponse(payload).data;
+  const videos = parseSearchResponse(payload).data;
+  if (!isRecord(payload) || typeof payload.nextOffset !== 'number' || typeof payload.hasMore !== 'boolean') {
+    throw new Error('ผลรายการเพลงยอดนิยมมีรูปแบบไม่ถูกต้อง');
+  }
+  return { videos, nextOffset: payload.nextOffset, hasMore: payload.hasMore };
 }

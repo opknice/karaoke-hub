@@ -205,7 +205,7 @@ test('an exact song title outranks an official title that only starts with the q
     title: 'ทน -SPRITE x GUYGEEGEE คาราโอเกะ+เนื้อร้อง',
     channel_name: 'Big Karaoke OFFICIAL', views_count: 73303 };
   const officialPrefix = { ...common, id: 'official-prefix', youtube_video_id: 'YF9BlDRGS9w',
-    title: 'ทนดูไม่ได้ - เท่ห์ อุเทน พรหมมินทร์ (KARAOKE)',
+    title: 'ทนดูไม่ได้ - เท่ห์ อุเทน พรหมมินทร์ (คาราโอเกะซาวด์ดนตรี)',
     channel_id: 'UCnm6ohF4dI3h9GiIUTtKxfg',
     channel_name: 'Rose Media & Entertainment', views_count: 2496433 };
 
@@ -232,6 +232,55 @@ test('official titles with transliteration and artist metadata remain exact song
     'transliteration, artist and karaoke labels are title metadata, not a weaker match');
   assert.deepEqual(rankKaraokeVideos([exact, official], 'ทรายกับทะเล').map(video => video.id),
     ['official', 'exact'], 'verified official identity resolves equal exact-title relevance');
+});
+
+test('optimized ranking preserves the original order across song and artist searches', () => {
+  const load = loader();
+  const { rankKaraokeVideos, getSearchRelevanceTier, getKaraokeTier } = load('src/lib/youtube-ranking.ts');
+  const { getOfficialYouTubeChannel, OFFICIAL_YOUTUBE_CHANNELS } = load('src/lib/official-youtube-channels.ts');
+  const titles = ['รัก - Bodyslam Karaoke', 'ใจ - แอม [Original Karaoke]', 'ขอบฟ้า karaoke',
+    'ทน - SPRITE x GUYGEEGEE คาราโอเกะ', 'Official Music Video', 'รักแท้ instrumental'];
+  const artists = ['Bodyslam', 'แอม เสาวลักษณ์', 'Unknown', 'รักใจ'];
+  const videos = Array.from({ length: 240 }, (_, index) => ({
+    id: `video-${index}`, youtube_video_id: String(index).padStart(11, '0'),
+    title: titles[index % titles.length], artist: artists[index % artists.length],
+    channel_id: index % 7 === 0 ? OFFICIAL_YOUTUBE_CHANNELS[0].channelId : 'other-channel',
+    channel_name: index % 5 === 0 ? 'Karaoke' : 'Music Label',
+    thumbnail_url: '', duration: 240, embeddable: index % 13 !== 0,
+    karaoke_score: index % 100,
+    views_count: index % 4 === 0 ? undefined : (index * 7919) % 100000,
+  }));
+  // Preserve the pre-optimization comparator as an independent ordering oracle.
+  const originalRank = (query, mode, preserveSearchMatches) => videos
+    .filter(video => preserveSearchMatches || getSearchRelevanceTier(video, query, mode) > 0)
+    .filter(video => getKaraokeTier(video) > 0)
+    .map((video, originalIndex) => ({ video, originalIndex }))
+    .sort((left, right) => {
+      const relevance = getSearchRelevanceTier(right.video, query, mode)
+        - getSearchRelevanceTier(left.video, query, mode);
+      if (relevance !== 0) return relevance;
+      const official = Number(Boolean(getOfficialYouTubeChannel(right.video.channel_id)))
+        - Number(Boolean(getOfficialYouTubeChannel(left.video.channel_id)));
+      if (official !== 0) return official;
+      const karaoke = getKaraokeTier(right.video) - getKaraokeTier(left.video);
+      if (karaoke !== 0) return karaoke;
+      const leftHasViews = left.video.views_count !== undefined;
+      const rightHasViews = right.video.views_count !== undefined;
+      if (leftHasViews !== rightHasViews) return rightHasViews ? 1 : -1;
+      const views = (right.video.views_count ?? 0) - (left.video.views_count ?? 0);
+      if (views !== 0) return views;
+      const score = right.video.karaoke_score - left.video.karaoke_score;
+      return score || left.originalIndex - right.originalIndex;
+    }).map(({ video }) => video.id);
+
+  for (const query of ['รัก', 'ใจ', 'ขอบฟ้า', 'bodyslam', 'ทน', 'เสียงเอื้อน', '']) {
+    for (const mode of ['song', 'artist']) {
+      for (const preserve of [false, true]) {
+        assert.deepEqual(rankKaraokeVideos(videos, query, mode, preserve).map(video => video.id),
+          originalRank(query, mode, preserve), `${query || '<empty>'}/${mode}/${preserve}`);
+      }
+    }
+  }
 });
 
 test('typing previews never fetch; concurrent clients share a request and preserve video-ID case', async () => {
@@ -387,6 +436,60 @@ test('popular catalog reads 50 playable songs ordered by stored YouTube views wi
   }
 });
 
+test('popular catalog pages load 50 valid songs at a time and stop at the end', async () => {
+  const originalFetch = global.fetch;
+  const originalUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const originalKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const originalSecretKey = process.env.SUPABASE_SECRET_KEY;
+  process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://popular-pages-test.supabase.co';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-only';
+  delete process.env.SUPABASE_SECRET_KEY;
+  const rows = Array.from({ length: 121 }, (_, index) => ({ payload: {
+    id: `yt-${index}`,
+    youtube_video_id: String(index).padStart(11, '0'),
+    title: `เพลง ${index} karaoke`,
+    channel_id: 'channel', channel_name: 'Karaoke', thumbnail_url: '',
+    duration: 180, embeddable: true, karaoke_score: 90, views_count: 121 - index,
+  } }));
+  rows.splice(1, 0, { payload: { invalid: true } });
+  const requests = [];
+  global.fetch = async (input) => {
+    const url = new URL(input);
+    assert.equal(url.hostname, 'popular-pages-test.supabase.co');
+    assert.equal(url.pathname, '/rest/v1/karaoke_catalog');
+    assert.equal(url.searchParams.get('order'), 'payload->views_count.desc,video_id.asc');
+    requests.push(url);
+    const offset = Number(url.searchParams.get('offset'));
+    const limit = Number(url.searchParams.get('limit'));
+    return Response.json(rows.slice(offset, offset + limit));
+  };
+  try {
+    const catalog = loader()('src/lib/youtube-catalog.ts');
+    const first = await catalog.getPopularCatalogPage(0);
+    const second = await catalog.getPopularCatalogPage(first.nextOffset);
+    const third = await catalog.getPopularCatalogPage(second.nextOffset);
+    assert.equal(first.videos.length, 50);
+    assert.equal(second.videos.length, 50);
+    assert.equal(third.videos.length, 21);
+    assert.equal(first.nextOffset, 51, 'cursor skips the invalid catalog row');
+    assert.equal(second.nextOffset, 101);
+    assert.equal(first.hasMore, true);
+    assert.equal(second.hasMore, true);
+    assert.equal(third.hasMore, false);
+    assert.equal(new Set([...first.videos, ...second.videos, ...third.videos]
+      .map((video) => video.youtube_video_id)).size, 121);
+    assert.ok(requests.every((url) => url.searchParams.get('limit') === '51'));
+  } finally {
+    global.fetch = originalFetch;
+    if (originalUrl === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    else process.env.NEXT_PUBLIC_SUPABASE_URL = originalUrl;
+    if (originalKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    else process.env.SUPABASE_SERVICE_ROLE_KEY = originalKey;
+    if (originalSecretKey === undefined) delete process.env.SUPABASE_SECRET_KEY;
+    else process.env.SUPABASE_SECRET_KEY = originalSecretKey;
+  }
+});
+
 test('catalog search falls back to an indexed title-prefix pool before the v2 RPC is installed', async () => {
   const originalFetch = global.fetch;
   const originalUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -398,7 +501,7 @@ test('catalog search falls back to an indexed title-prefix pool before the v2 RP
     title: 'ทน -SPRITE x GUYGEEGEE คาราโอเกะ+เนื้อร้อง',
     channel_name: 'Big Karaoke OFFICIAL', views_count: 73303 };
   const officialPrefix = { ...common, id: 'official-prefix', youtube_video_id: 'YF9BlDRGS9w',
-    title: 'ทนดูไม่ได้ - เท่ห์ อุเทน พรหมมินทร์ (KARAOKE)',
+    title: 'ทนดูไม่ได้ - เท่ห์ อุเทน พรหมมินทร์ (คาราโอเกะซาวด์ดนตรี)',
     channel_id: 'UCnm6ohF4dI3h9GiIUTtKxfg', channel_name: 'Rose Media & Entertainment',
     views_count: 2496433 };
   const requests = [];
@@ -455,21 +558,25 @@ test('RSMUSIC-X catalog import accepts only titles ending in Official karaoke', 
   assert.equal(isOfficialCatalogImportEligible({ ...video, channel_id: 'another-channel' }, channel), false);
 });
 
-test('Rose Media catalog import accepts only channel videos with karaoke in the title', () => {
+test('Rose Media catalog import excludes plain (KARAOKE) titles but keeps instrumental-sound titles', () => {
   const load = loader();
   const { OFFICIAL_YOUTUBE_CHANNELS } = load('src/lib/official-youtube-channels.ts');
   const { isOfficialCatalogImportEligible } = load('src/lib/youtube-catalog.ts');
+  const { getKaraokeTier } = load('src/lib/youtube-ranking.ts');
   const channel = OFFICIAL_YOUTUBE_CHANNELS.find(({ channelId }) => (
     channelId === 'UCnm6ohF4dI3h9GiIUTtKxfg'
   ));
   assert.ok(channel, 'verified Rose Media channel ID is registered');
-  assert.deepEqual(channel.catalogTitleIncludesAny, ['karaoke', 'คาราโอเกะ']);
+  assert.deepEqual(channel.catalogTitleIncludesAny, ['คาราโอเกะซาวด์ดนตรี']);
+  assert.deepEqual(channel.catalogExcludedTitleSuffixes, ['(KARAOKE)']);
 
   const video = { channel_id: channel.channelId,
     title: 'จดหมายผิดซอง | ผิดซองเพราะลองใจ (KARAOKE)​' };
-  assert.equal(isOfficialCatalogImportEligible(video, channel), true);
+  assert.equal(isOfficialCatalogImportEligible(video, channel), false);
+  assert.equal(getKaraokeTier({ ...video, id: 'rose-plain', youtube_video_id: 'r0sePl41n00',
+    channel_name: channel.name, thumbnail_url: '', duration: 240, embeddable: true, karaoke_score: 90 }), 0);
   assert.equal(isOfficialCatalogImportEligible({ ...video,
-    title: 'รวมฮิต - อมตะเพลงลูกทุ่ง ชุด 51 (Karaoke Album)' }, channel), true);
+    title: 'รวมฮิต - อมตะเพลงลูกทุ่ง ชุด 51 (Karaoke Album)' }, channel), false);
   assert.equal(isOfficialCatalogImportEligible({ ...video,
     title: 'หัวใจกระดาษ - ดาวใจ ไพจิตร (คาราโอเกะซาวด์ดนตรี)' }, channel), true);
   assert.equal(isOfficialCatalogImportEligible({ ...video,
@@ -495,6 +602,25 @@ test('RsiamMusic catalog import accepts only channel videos with karaoke in the 
     title: 'เพลงตัวอย่าง - ศิลปินอาร์สยาม (คาราโอเกะ)' }, channel), true);
   assert.equal(isOfficialCatalogImportEligible({ ...video,
     title: 'เพลงตัวอย่าง - ศิลปินอาร์สยาม [Official MV]' }, channel), false);
+  assert.equal(isOfficialCatalogImportEligible({ ...video,
+    channel_id: 'another-channel' }, channel), false);
+});
+
+test('welovekamikaze catalog import accepts only KAMIOKE and KARAOKE titles', () => {
+  const load = loader();
+  const { OFFICIAL_YOUTUBE_CHANNELS } = load('src/lib/official-youtube-channels.ts');
+  const { isOfficialCatalogImportEligible } = load('src/lib/youtube-catalog.ts');
+  const channel = OFFICIAL_YOUTUBE_CHANNELS.find(({ channelId }) => (
+    channelId === 'UCjqZeIIXmNj3WS7auJjJFpg'
+  ));
+  assert.ok(channel, 'verified welovekamikaze channel ID is registered');
+  assert.deepEqual(channel.catalogTitleIncludesAny, ['kamioke', 'karaoke']);
+
+  const video = { channel_id: channel.channelId,
+    title: 'คาราโอเกะ รักแล้วไปไหน (After Love) - MIN [KAMIOKE]' };
+  assert.equal(isOfficialCatalogImportEligible(video, channel), true);
+  assert.equal(isOfficialCatalogImportEligible({ ...video,
+    title: 'รักกันอย่าบังคับ (Dictator) – All KAMIKAZE [Official MV]' }, channel), false);
   assert.equal(isOfficialCatalogImportEligible({ ...video,
     channel_id: 'another-channel' }, channel), false);
 });

@@ -6,6 +6,7 @@ export interface OfficialYouTubeChannel {
   readonly reviewedAt: string;
   readonly catalogTitleSuffix?: string;
   readonly catalogTitleIncludesAny?: readonly string[];
+  readonly catalogExcludedTitleSuffixes?: readonly string[];
 }
 
 // Curated channel identity, not YouTube's verification badge or a claim about
@@ -32,7 +33,10 @@ export const OFFICIAL_YOUTUBE_CHANNELS: readonly OfficialYouTubeChannel[] = [
     url: 'https://www.youtube.com/@Rose_Media',
     evidenceUrl: 'https://www.youtube.com/@Rose_Media/search?query=karaoke',
     reviewedAt: '2026-09-30',
-    catalogTitleIncludesAny: ['karaoke', 'คาราโอเกะ'],
+    // Rose's uploads labelled only “(KARAOKE)” retain the lead vocal. Its
+    // actual instrumental versions use this Thai label in the title.
+    catalogTitleIncludesAny: ['คาราโอเกะซาวด์ดนตรี'],
+    catalogExcludedTitleSuffixes: ['(KARAOKE)'],
   },
   {
     channelId: 'UCLcCpNY-zaL3vEERD5rh5Ew',
@@ -66,10 +70,38 @@ export const OFFICIAL_YOUTUBE_CHANNELS: readonly OfficialYouTubeChannel[] = [
     reviewedAt: '2026-09-30',
     catalogTitleSuffix: 'คาราโอเกะ',
   },
+  {
+    channelId: 'UCjqZeIIXmNj3WS7auJjJFpg',
+    name: 'welovekamikaze',
+    url: 'https://www.youtube.com/@kamikaze_music',
+    evidenceUrl: 'https://www.youtube.com/@kamikaze_music/videos',
+    reviewedAt: '2026-10-01',
+    catalogTitleIncludesAny: ['kamioke', 'karaoke'],
+  },
 ];
 
 const channelsById = new Map(OFFICIAL_YOUTUBE_CHANNELS.map((channel) => [channel.channelId, channel]));
 
 export function getOfficialYouTubeChannel(channelId: string | undefined): OfficialYouTubeChannel | undefined {
   return channelId ? channelsById.get(channelId) : undefined;
+}
+
+function normalizeTitleEnding(value: string): string {
+  return value.normalize('NFKC').trim().toLocaleLowerCase('th-TH')
+    .replace(/[\u200B-\u200D\uFEFF]+$/gu, '').trim();
+}
+
+export function isOfficialChannelTitleExcluded(
+  channelId: string | undefined,
+  title: string
+): boolean {
+  const channel = getOfficialYouTubeChannel(channelId);
+  const normalizedTitle = normalizeTitleEnding(title);
+  const requiredTerms = channel?.catalogTitleIncludesAny;
+  if (requiredTerms?.length && !requiredTerms.some((term) => (
+    normalizedTitle.includes(normalizeTitleEnding(term))
+  ))) return true;
+  const excludedSuffixes = channel?.catalogExcludedTitleSuffixes;
+  if (!excludedSuffixes?.length) return false;
+  return excludedSuffixes.some((suffix) => normalizedTitle.endsWith(normalizeTitleEnding(suffix)));
 }

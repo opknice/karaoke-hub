@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { catalogRest } from './supabase/catalog-rest';
 import {
   OFFICIAL_YOUTUBE_CHANNELS,
+  isOfficialChannelTitleExcluded,
   type OfficialYouTubeChannel,
 } from './official-youtube-channels';
 import { normalizeYouTubeSearchText, rankKaraokeVideos } from './youtube-ranking';
@@ -37,13 +38,16 @@ export function catalogPatterns(query: string): string[] {
 
 function catalogVideos(value: unknown): YouTubeVideo[] {
   if (!Array.isArray(value)) throw new Error('รูปแบบข้อมูลคลังเพลงไม่ถูกต้อง');
-  return value.filter(isYouTubeVideo);
+  return value.filter((video): video is YouTubeVideo => (
+    isYouTubeVideo(video) && !isCatalogTitleExcluded(video)
+  ));
 }
 
 function catalogPayloadVideos(value: unknown): YouTubeVideo[] {
   if (!Array.isArray(value)) throw new Error('รูปแบบข้อมูลคลังเพลงไม่ถูกต้อง');
   return value.flatMap((row): YouTubeVideo[] => (
-    record(row) && isYouTubeVideo(row.payload) ? [row.payload] : []
+    record(row) && isYouTubeVideo(row.payload) && !isCatalogTitleExcluded(row.payload)
+      ? [row.payload] : []
   ));
 }
 
@@ -112,7 +116,15 @@ export function isOfficialCatalogImportEligible(
     && !channel.catalogTitleIncludesAny.some((term) => (
       title.includes(normalizeYouTubeSearchText(term))
     ))) return false;
+  if (isCatalogTitleExcluded(video, channel)) return false;
   return true;
+}
+
+export function isCatalogTitleExcluded(
+  video: Pick<YouTubeVideo, 'channel_id' | 'title'>,
+  knownChannel?: OfficialYouTubeChannel
+): boolean {
+  return isOfficialChannelTitleExcluded(knownChannel?.channelId ?? video.channel_id, video.title);
 }
 
 export async function searchCatalog(query: string): Promise<YouTubeVideo[]> {
@@ -155,11 +167,49 @@ export async function getTopCatalogVideos(limit = 50): Promise<YouTubeVideo[]> {
       }
     });
   }
-  return cached.promise;
+  return (await cached.promise).filter((video) => !isCatalogTitleExcluded(video));
+}
+
+export async function getPopularCatalogPage(offset: number): Promise<{
+  videos: YouTubeVideo[];
+  nextOffset: number;
+  hasMore: boolean;
+}> {
+  const pageSize = 50;
+  const videos: YouTubeVideo[] = [];
+  let cursor = offset;
+  let nextOffset = offset;
+  const expiresAt = new Date().toISOString();
+
+  // Some older catalog rows are excluded after reading. Keep scanning until
+  // the page contains 50 playable songs, then look ahead for one more.
+  while (true) {
+    const params = new URLSearchParams({
+      select: 'payload',
+      expires_at: `gt.${expiresAt}`,
+      'payload->>embeddable': 'eq.true',
+      order: 'payload->views_count.desc,video_id.asc',
+      offset: String(cursor),
+      limit: String(pageSize + 1),
+    });
+    const rows = await catalogRest(`karaoke_catalog?${params.toString()}`);
+    if (!Array.isArray(rows)) throw new Error('รูปแบบข้อมูลคลังเพลงไม่ถูกต้อง');
+    for (const row of rows) {
+      cursor++;
+      const video = catalogPayloadVideos([row])[0];
+      if (!video) continue;
+      if (videos.length === pageSize) return { videos, nextOffset, hasMore: true };
+      videos.push(video);
+      if (videos.length === pageSize) nextOffset = cursor;
+    }
+    if (rows.length < pageSize + 1) {
+      return { videos, nextOffset: videos.length === pageSize ? nextOffset : cursor, hasMore: false };
+    }
+  }
 }
 
 export async function saveCatalogVideos(videos: readonly YouTubeVideo[]): Promise<void> {
-  const rows = videos.flatMap((video) => {
+  const rows = videos.filter((video) => !isCatalogTitleExcluded(video)).flatMap((video) => {
     const refreshed = Date.parse(video.last_synced_at ?? '');
     if (!video.channel_id || !Number.isFinite(refreshed) || Date.now() - refreshed >= 29 * DAY) return [];
     return [{ video_id: video.youtube_video_id, channel_id: video.channel_id,
@@ -175,7 +225,7 @@ export async function saveCatalogVideos(videos: readonly YouTubeVideo[]): Promis
   popularCatalogCache.clear();
 }
 
-async function youtubeCatalogRequest(endpoint: 'channels' | 'playlistItems' | 'videos', params: Record<string, string>): Promise<Record<string, unknown>> {
+async function youtubeCatalogRequest(endpoint: 'channels' | 'playlistItems' | 'search' | 'videos', params: Record<string, string>): Promise<Record<string, unknown>> {
   const apiKey = process.env.YOUTUBE_API_KEY;
   if (!apiKey) throw new Error('ยังไม่ได้ตั้งค่า YouTube API Key');
   const reserved = await catalogRest('rpc/karaoke_catalog_reserve', { method: 'POST', body: '{}' });
@@ -246,6 +296,136 @@ async function refreshIds(
   await saveCatalogVideos(eligible);
   queryCache.clear();
   return eligible;
+}
+
+function searchVideoIds(payload: Record<string, unknown>): string[] {
+  if (!Array.isArray(payload.items)) return [];
+  return payload.items.flatMap((item): string[] => {
+    const id = record(item) && record(item.id) ? item.id : undefined;
+    return typeof id?.videoId === 'string' && /^[\w-]{11}$/.test(id.videoId) ? [id.videoId] : [];
+  });
+}
+
+export interface RoseInstrumentalCatalogSyncResult {
+  pages: number;
+  videosDiscovered: number;
+  videosImported: number;
+  truncated: boolean;
+}
+
+export interface RoseInstrumentalUploadsScanResult {
+  pages: number;
+  videosScanned: number;
+  videosImported: number;
+  truncated: boolean;
+}
+
+// The uploads playlist import is intentionally broad. This one-off operator
+// sync follows Rose Media's own channel-search source for the instrumental
+// label, which is the reliable historical backfill source.
+export async function syncRoseInstrumentalCatalog(
+  onProgress: (message: string) => void
+): Promise<RoseInstrumentalCatalogSyncResult> {
+  const channel = OFFICIAL_YOUTUBE_CHANNELS.find(({ channelId }) => (
+    channelId === 'UCnm6ohF4dI3h9GiIUTtKxfg'
+  ));
+  if (!channel) throw new Error('ไม่พบการตั้งค่าช่อง Rose Media');
+
+  const name = `sync-search:${channel.channelId}:instrumental`;
+  const token = randomUUID();
+  if (!await lock(name, token)) throw new Error('มีการนำเข้าผลค้นหา Rose Media ทำงานอยู่แล้ว');
+
+  let pageToken = '';
+  let pages = 0;
+  let videosDiscovered = 0;
+  let videosImported = 0;
+  try {
+    for (let page = 0; page < 10; page++) {
+      const payload = await youtubeCatalogRequest('search', {
+        part: 'id', channelId: channel.channelId, type: 'video', maxResults: '50',
+        q: '(คาราโอเกะซาวด์ดนตรี)', ...(pageToken ? { pageToken } : {}),
+      });
+      const ids = searchVideoIds(payload);
+      const imported = ids.length ? await refreshIds(ids, channel) : [];
+      pages++;
+      videosDiscovered += ids.length;
+      videosImported += imported.length;
+      pageToken = typeof payload.nextPageToken === 'string' ? payload.nextPageToken : '';
+      onProgress(`Rose Media: หน้าผลค้นหา ${pages}, พบ ${ids.length}, บันทึก ${imported.length}`);
+      if (!pageToken) break;
+    }
+    return { pages, videosDiscovered, videosImported, truncated: Boolean(pageToken) };
+  } finally {
+    await unlock(name, token);
+  }
+}
+
+// search.list has a 500-result ceiling for an unauthenticated channel search.
+// Scan Rose's uploads playlist as the exhaustive follow-up and apply the same
+// title rule after fetching authoritative video metadata.
+export async function scanRoseInstrumentalUploads(
+  onProgress: (message: string) => void
+): Promise<RoseInstrumentalUploadsScanResult> {
+  const channel = OFFICIAL_YOUTUBE_CHANNELS.find(({ channelId }) => (
+    channelId === 'UCnm6ohF4dI3h9GiIUTtKxfg'
+  ));
+  if (!channel) throw new Error('ไม่พบการตั้งค่าช่อง Rose Media');
+
+  const name = `scan-uploads:${channel.channelId}:instrumental`;
+  const token = randomUUID();
+  if (!await lock(name, token)) throw new Error('มีการสแกน Uploads ของ Rose Media ทำงานอยู่แล้ว');
+
+  const stateRows = await catalogRest(
+    `karaoke_catalog_sync?channel_id=eq.${channel.channelId}&select=*`
+  );
+  const state = Array.isArray(stateRows) && record(stateRows[0]) ? stateRows[0] : undefined;
+  let pageToken = typeof state?.page_token === 'string' ? state.page_token : '';
+  let pages = 0;
+  let videosScanned = 0;
+  let videosImported = 0;
+  try {
+    const playlistId = await resolveUploadsPlaylist(
+      channel, typeof state?.playlist_id === 'string' ? state.playlist_id : ''
+    );
+    for (let page = 0; page < 100; page++) {
+      if (!await lock(name, token)) throw new Error('สิทธิ์ล็อกการสแกนหมดอายุ กรุณาลองใหม่');
+      const data = await youtubeCatalogRequest('playlistItems', {
+        part: 'snippet,contentDetails', playlistId, maxResults: '50', ...(pageToken ? { pageToken } : {}),
+      });
+      const ids = (data.items as unknown[]).flatMap((item): string[] => {
+        const details = record(item) && record(item.contentDetails) ? item.contentDetails : undefined;
+        return typeof details?.videoId === 'string' && /^[\w-]{11}$/.test(details.videoId)
+          ? [details.videoId] : [];
+      });
+      // playlistItems includes titles, so only matching candidates consume a
+      // videos.list request. refreshIds remains the authority for embeddable
+      // status and final channel/title validation before writing.
+      const candidateIds = (data.items as unknown[]).flatMap((item): string[] => {
+        const details = record(item) && record(item.contentDetails) ? item.contentDetails : undefined;
+        const snippet = record(item) && record(item.snippet) ? item.snippet : undefined;
+        return typeof details?.videoId === 'string' && /^[\w-]{11}$/.test(details.videoId)
+          && typeof snippet?.title === 'string'
+          && isOfficialCatalogImportEligible({ channel_id: channel.channelId, title: snippet.title }, channel)
+          ? [details.videoId] : [];
+      });
+      const imported = candidateIds.length ? await refreshIds(candidateIds, channel) : [];
+      pages++;
+      videosScanned += ids.length;
+      videosImported += imported.length;
+      pageToken = typeof data.nextPageToken === 'string' ? data.nextPageToken : '';
+      await catalogRest('karaoke_catalog_sync?on_conflict=channel_id', {
+        method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify({ channel_id: channel.channelId, playlist_id: playlistId,
+          page_token: pageToken || null, completed_at: pageToken ? null : new Date().toISOString(),
+          updated_at: new Date().toISOString() }),
+      });
+      onProgress(`Rose Media Uploads: หน้า ${pages}, สแกน ${ids.length}, บันทึก ${imported.length}`);
+      if (!pageToken) break;
+    }
+    return { pages, videosScanned, videosImported, truncated: Boolean(pageToken) };
+  } finally {
+    await unlock(name, token);
+  }
 }
 
 export async function searchCatalogWithRefresh(query: string): Promise<{ videos: YouTubeVideo[]; warning?: string }> {
