@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Maximize2, Minimize2, QrCode, X } from 'lucide-react';
+import { Maximize2, QrCode, X } from 'lucide-react';
 import { PlayerSearchOverlay } from '@/components/PlayerSearchOverlay';
 import { PlayerQRGuideCard } from '@/components/PlayerQRGuideCard';
 import { PlayerVocalCutStatus } from '@/components/PlayerVocalCutStatus';
@@ -13,12 +13,15 @@ export default function PlayerPage() {
   const { activeRoom, ensureActiveRoom, nowPlaying, volume, isMuted } = useKaraoke();
   const [isQueueBrowserActive, setIsQueueBrowserActive] = useState(false);
   const [showQRQuickModal, setShowQRQuickModal] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isMobileLandscape, setIsMobileLandscape] = useState(false);
+  const [isPageFullscreen, setIsPageFullscreen] = useState(false);
   const [fullscreenError, setFullscreenError] = useState('');
   const [normalizeFeedbackPhase, setNormalizeFeedbackPhase] = useState<'hidden' | 'visible' | 'fading'>('hidden');
   const [roomSetupError, setRoomSetupError] = useState('');
   const [isRetryingRoom, setIsRetryingRoom] = useState(false);
   const playerRef = useRef<YouTubePlayerHandle>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
+  const ownsFullscreenRef = useRef(false);
   const normalizeFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const normalizeHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const vocalCut = useVocalCutExtension(
@@ -30,23 +33,6 @@ export default function PlayerPage() {
 
   const restartCurrentSong = useCallback(() => {
     playerRef.current?.restartCurrentSong();
-  }, []);
-
-  const togglePageFullscreen = useCallback(async () => {
-    setFullscreenError('');
-    try {
-      if (document.fullscreenElement) {
-        await document.exitFullscreen();
-        return;
-      }
-      if (!document.fullscreenEnabled) {
-        setFullscreenError('เบราว์เซอร์นี้ไม่รองรับโหมดเต็มจอ');
-        return;
-      }
-      await document.documentElement.requestFullscreen();
-    } catch {
-      setFullscreenError('ไม่สามารถเปิดโหมดเต็มจอได้ กรุณาลองอีกครั้ง');
-    }
   }, []);
 
   const toggleNormalizeWithFeedback = useCallback(() => {
@@ -64,21 +50,54 @@ export default function PlayerPage() {
   }, []);
 
   useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsFullscreen(Boolean(document.fullscreenElement));
-      setFullscreenError('');
-    };
-    const handleFullscreenError = () => {
-      setFullscreenError('ไม่สามารถเปิดโหมดเต็มจอได้ กรุณาลองอีกครั้ง');
+    const landscapeMedia = window.matchMedia('(orientation: landscape) and (pointer: coarse)');
+
+    const syncOrientation = () => {
+      const isLandscape = landscapeMedia.matches;
+      setIsMobileLandscape(isLandscape);
+      if (!isLandscape) {
+        setFullscreenError('');
+        if (ownsFullscreenRef.current && document.fullscreenElement === pageRef.current) {
+          ownsFullscreenRef.current = false;
+          void document.exitFullscreen().catch(() => {
+            // The browser may already have left fullscreen during rotation.
+          });
+        }
+      }
     };
 
-    handleFullscreenChange();
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    document.addEventListener('fullscreenerror', handleFullscreenError);
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
-      document.removeEventListener('fullscreenerror', handleFullscreenError);
+    const syncFullscreen = () => {
+      const isFullscreen = document.fullscreenElement === pageRef.current;
+      setIsPageFullscreen(isFullscreen);
+      if (!isFullscreen) ownsFullscreenRef.current = false;
+      setFullscreenError('');
     };
+
+    syncOrientation();
+    syncFullscreen();
+    landscapeMedia.addEventListener('change', syncOrientation);
+    document.addEventListener('fullscreenchange', syncFullscreen);
+    return () => {
+      landscapeMedia.removeEventListener('change', syncOrientation);
+      document.removeEventListener('fullscreenchange', syncFullscreen);
+    };
+  }, []);
+
+  const enterPageFullscreen = useCallback(async () => {
+    const page = pageRef.current;
+    if (!page?.requestFullscreen || !document.fullscreenEnabled) {
+      setFullscreenError('เบราว์เซอร์นี้ไม่รองรับการแสดงเต็มจอ');
+      return;
+    }
+
+    setFullscreenError('');
+    ownsFullscreenRef.current = true;
+    try {
+      await page.requestFullscreen();
+    } catch {
+      ownsFullscreenRef.current = false;
+      setFullscreenError('ไม่สามารถเปิดเต็มจอได้ กรุณาแตะลองอีกครั้ง');
+    }
   }, []);
 
   const initializeRoom = useCallback(async () => {
@@ -108,7 +127,7 @@ export default function PlayerPage() {
   }, []);
 
   return (
-    <div className="relative flex h-dvh w-full flex-col overflow-hidden bg-black xl:flex-row">
+    <div ref={pageRef} className="relative flex h-dvh w-full flex-col overflow-hidden bg-black xl:flex-row">
       <PlayerVocalCutStatus
         state={vocalCut.state}
         notice={vocalCut.notice}
@@ -137,25 +156,19 @@ export default function PlayerPage() {
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={() => void togglePageFullscreen()}
-        aria-label={isFullscreen ? 'ออกจากโหมดเต็มจอ' : 'แสดง Player เต็มจอ'}
-        aria-pressed={isFullscreen}
-        title={isFullscreen ? 'ออกจากโหมดเต็มจอ' : 'แสดง Player เต็มจอ'}
-        className="fixed bottom-4 right-4 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-zinc-950/85 text-zinc-200 shadow-2xl backdrop-blur-md transition hover:border-violet-400/60 hover:bg-zinc-900 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 sm:bottom-6 sm:right-6"
-      >
-        {isFullscreen
-          ? <Minimize2 className="h-5 w-5" aria-hidden="true" />
-          : <Maximize2 className="h-5 w-5" aria-hidden="true" />}
-      </button>
-
-      {fullscreenError && (
-        <div
-          role="alert"
-          className="fixed bottom-20 right-4 z-[60] max-w-xs rounded-xl border border-rose-500/40 bg-rose-950/95 px-4 py-2.5 text-sm text-rose-100 shadow-2xl backdrop-blur-md sm:bottom-24 sm:right-6"
-        >
-          {fullscreenError}
+      {isMobileLandscape && !isPageFullscreen && !isQueueBrowserActive && !showQRQuickModal && (
+        <div className="pointer-events-none absolute inset-x-3 bottom-3 z-40 flex justify-center">
+          <div className="pointer-events-auto flex max-w-full flex-col items-center gap-1 rounded-2xl border border-white/15 bg-zinc-950/85 px-3 py-2 text-center text-white shadow-2xl backdrop-blur-md">
+            <button
+              type="button"
+              onClick={() => void enterPageFullscreen()}
+              className="flex items-center gap-2 rounded-lg px-2 py-1 text-sm font-semibold transition hover:text-violet-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
+            >
+              <Maximize2 className="h-4 w-4" aria-hidden="true" />
+              แตะเพื่อดูเวทีเต็มจอ
+            </button>
+            {fullscreenError && <span role="alert" className="text-xs text-rose-200">{fullscreenError}</span>}
+          </div>
         </div>
       )}
 
