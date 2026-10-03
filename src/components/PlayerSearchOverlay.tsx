@@ -13,7 +13,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useKaraoke } from '@/context/KaraokeContext';
 import { formatDuration } from '@/lib/queue-algorithm';
 import type { YouTubeVideo } from '@/lib/types';
-import { searchPlayerKaraoke, getLocalSearchPreview, isDirectVideoQuery, previewCatalog } from '@/lib/youtube-search-client';
+import { searchPlayerKaraoke, getLocalSearchPreview, getPopularKaraokeVideos, isDirectVideoQuery, previewCatalog } from '@/lib/youtube-search-client';
 import { useLocalCatalog } from '@/lib/use-local-catalog';
 import { isYouTubeVideo } from '@/lib/youtube-video-validation';
 import { SearchBudgetNotice } from './SearchBudgetNotice';
@@ -31,6 +31,8 @@ import {
 } from '@/lib/youtube-ranking';
 import { PlayerQRGuideCard } from './PlayerQRGuideCard';
 import { LyricsGoogleSearchModal } from './LyricsGoogleSearchModal';
+import { PlayerIdleWelcome, PlayerIdleKeyboardHeading, PlayerIdleKeyboardHints, PlayerIdleRoom } from './PlayerIdleGuide';
+import idleStyles from './PlayerIdleGuide.module.css';
 
 type SearchStatus = 'idle' | 'loading' | 'success' | 'error';
 
@@ -86,6 +88,7 @@ export function PlayerSearchOverlay({
     nowPlaying,
     playQueueItem,
     queue,
+    roomMembers,
     setIsMuted,
     setVolume,
     skipSong,
@@ -103,6 +106,7 @@ export function PlayerSearchOverlay({
   const lyricsUiActiveRef = useRef(false);
 
   const [query, setQuery] = useState('');
+  const [showPopular, setShowPopular] = useState(false);
   const [isQueueBrowserOpen, setIsQueueBrowserOpen] = useState(false);
   const [selectedQueueItemId, setSelectedQueueItemId] = useState<string | null>(null);
   const [mode, setMode] = useState<YouTubeSearchMode>('song');
@@ -137,13 +141,14 @@ export function PlayerSearchOverlay({
   const catalogError = useCatalogPreview(query, localCatalog.initialized && status === 'idle' && localCatalog.mode === 'supabase', receivePreview);
 
   const trimmedQuery = query.trim();
-  const isOpen = query.length > 0 || localCatalog.panelOpen || localCatalog.busy === 'downloading';
+  const isOpen = query.length > 0 || showPopular || showLyricsInput || localCatalog.panelOpen || localCatalog.busy === 'downloading';
   const isQueueBrowserActive = isQueueBrowserOpen && !isOpen;
+  const isIdleGuideVisible = !nowPlaying && !isOpen && !isQueueBrowserActive;
   const selectedQueueItem =
     queue.find((item) => item.id === selectedQueueItemId) ?? queue[0] ?? null;
   const results = useMemo(
-    () => (isDirectVideoQuery(trimmedQuery) ? rawResults : rankKaraokeVideos(rawResults, trimmedQuery, mode, status === 'success')).slice(0, MAX_VISIBLE_RESULTS),
-    [mode, rawResults, trimmedQuery, status]
+    () => (showPopular || isDirectVideoQuery(trimmedQuery) ? rawResults : rankKaraokeVideos(rawResults, trimmedQuery, mode, status === 'success')).slice(0, MAX_VISIBLE_RESULTS),
+    [mode, rawResults, trimmedQuery, status, showPopular]
   );
   const selectedSearchResult = results[selectedIndex];
   const activeDescendantId = isQueueBrowserActive
@@ -163,6 +168,7 @@ export function PlayerSearchOverlay({
     requestRef.current?.abort();
     queryRef.current = '';
     setQuery('');
+    setShowPopular(false);
     setLocalPanelOpen(false);
     setIsQueueBrowserOpen(false);
     setSelectedQueueItemId(null);
@@ -202,6 +208,7 @@ export function PlayerSearchOverlay({
 
   const updateQuery = useCallback((value: string) => {
     requestRef.current?.abort();
+    setShowPopular(false);
     queryRef.current = value;
     setQuery(value);
     setIsQueueBrowserOpen(false);
@@ -220,6 +227,31 @@ export function PlayerSearchOverlay({
     setStatus('idle');
     setSearchSource('catalog');
   }, [searchLocalCatalog]);
+
+  const openPopular = useCallback(async () => {
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    setShowPopular(true);
+    setRawResults([]);
+    setSelectedIndex(-1);
+    setStatus('loading');
+    setErrorMessage('');
+    setLocalResultsActive(false);
+    setSearchSource('catalog');
+    try {
+      const page = await getPopularKaraokeVideos(controller.signal);
+      if (controller.signal.aborted) return;
+      setRawResults(page.videos);
+      setStatus('success');
+    } catch (error: unknown) {
+      if (controller.signal.aborted) return;
+      setErrorMessage(error instanceof Error ? error.message : 'โหลดเพลงยอดนิยมไม่สำเร็จ กรุณาลองใหม่');
+      setStatus('error');
+    } finally {
+      if (requestRef.current === controller) requestRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     const previous = catalogModeRef.current;
@@ -619,16 +651,19 @@ export function PlayerSearchOverlay({
     <>
       <section
         className={
-          isOpen
+          isIdleGuideVisible ? idleStyles.screen : isOpen
             ? 'pointer-events-none fixed inset-0 z-50 bg-gradient-to-b from-black/85 via-black/45 to-transparent px-4 pt-[6vh] sm:px-8'
             : 'pointer-events-none fixed left-0 top-0 z-50 h-px w-px overflow-hidden opacity-0'
         }
         role="search"
         aria-label="ค้นหาเพลงจากหน้า Player"
       >
-        <div className={isOpen ? 'pointer-events-auto mx-auto w-full max-w-5xl xl:max-w-6xl' : ''}>
+        <div className={isIdleGuideVisible ? idleStyles.layout : ''}>
+        {isIdleGuideVisible && <PlayerIdleWelcome memberCount={roomMembers.length} queueCount={queue.length} />}
+        <div className={isIdleGuideVisible ? idleStyles.search : isOpen ? 'pointer-events-auto mx-auto w-full max-w-5xl xl:max-w-6xl' : ''}>
           <div className="rounded-2xl border border-white/15 bg-zinc-950/95 p-3 shadow-2xl backdrop-blur-xl sm:p-4">
-            <div className="flex items-center gap-3">
+            {isIdleGuideVisible && <PlayerIdleKeyboardHeading />}
+            <div className={isIdleGuideVisible ? idleStyles.inputRow : 'flex items-center gap-3'}>
               <Search className="h-5 w-5 shrink-0 text-violet-300" aria-hidden="true" />
               <input
                 ref={inputRef}
@@ -648,7 +683,7 @@ export function PlayerSearchOverlay({
                 aria-controls={isQueueBrowserActive ? 'player-queue-results' : 'player-search-results'}
                 aria-activedescendant={activeDescendantId}
               />
-              <button type="button" aria-label="สลับการเรียงตามชื่อเพลงหรือศิลปิน" onClick={() => {
+              <button hidden={isIdleGuideVisible} type="button" aria-label="สลับการเรียงตามชื่อเพลงหรือศิลปิน" onClick={() => {
                 const nextMode = mode === 'song' ? 'artist' : 'song';
                 searchModeRef.current = nextMode;
                 setMode(nextMode);
@@ -664,6 +699,8 @@ export function PlayerSearchOverlay({
               </button>
               <button type="button" disabled={status === 'loading'} onClick={() => void submitSearch()} className="rounded-lg bg-violet-600 px-3 py-2 text-sm text-white disabled:opacity-50">{localCatalog.mode === 'local' ? 'ค้นในเครื่อง' : 'ค้นในคลัง'}</button>
             </div>
+            {isIdleGuideVisible && <PlayerIdleKeyboardHints onPopular={() => void openPopular()} onLyrics={toggleLyricsInput} />}
+            {showPopular && <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-violet-200"><span>เพลงยอดนิยมในคลัง · ↑↓ เลือกเพลง แล้วกด Enter</span><button type="button" onClick={closeSearch} className="rounded-lg border border-white/20 px-3 py-2 text-white">กลับหน้ารอ (Esc)</button>{status === 'error' && <button type="button" onClick={() => void openPopular()} className="rounded-lg bg-violet-700 px-3 py-2 text-white">ลองโหลดใหม่</button>}</div>}
 
             {isOpen && (
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3 text-xs">
@@ -783,7 +820,7 @@ export function PlayerSearchOverlay({
               </div>
             )}
           </div>
-          <SearchBudgetNotice />
+          {isOpen && <SearchBudgetNotice />}
           {localCatalog.mode === 'supabase' && catalogError && <p role="status" className="mt-2 text-xs text-amber-200">{catalogError}</p>}
 
           {isOpen && (
@@ -797,7 +834,7 @@ export function PlayerSearchOverlay({
               {status === 'idle' && trimmedQuery.length >= MIN_SEARCH_LENGTH && (
                 <p className="px-5 py-3 text-center text-sm text-zinc-400">{localCatalog.mode === 'local' ? 'ค้นในเครื่องขณะพิมพ์' : 'ค้นในคลังขณะพิมพ์'} • ↑↓ หรือคลิกเลือกเพลง • กด Enter เพื่อค้นต่อบน YouTube เมื่อไม่พบในคลัง</p>
               )}
-              {trimmedQuery.length < MIN_SEARCH_LENGTH && (
+              {!showPopular && trimmedQuery.length < MIN_SEARCH_LENGTH && (
                 <div className="px-5 py-6 text-center text-sm text-zinc-400" role="status">
                   พิมพ์อย่างน้อย 2 ตัวอักษรเพื่อเริ่มค้นหา
                 </div>
@@ -826,7 +863,7 @@ export function PlayerSearchOverlay({
               {status === 'success' && results.length === 0 && (
                 <div className="px-5 py-8 text-center text-sm text-zinc-400">
                   <Music2 className="mx-auto mb-2 h-6 w-6 text-zinc-500" aria-hidden="true" />
-                  <p className="font-semibold text-zinc-200">ไม่พบเพลงในคลังหรือ YouTube</p>
+                  <p className="font-semibold text-zinc-200">{showPopular ? 'ยังไม่มีเพลงยอดนิยมในคลัง' : 'ไม่พบเพลงในคลังหรือ YouTube'}</p>
                   <p className="mt-1 text-xs text-zinc-400">
                     ลองใช้คำค้นอื่น หรือให้เพื่อนๆ สแกน QR ด้านข้างเพื่อช่วยกันค้นหาได้เลย!
                   </p>
@@ -916,6 +953,8 @@ export function PlayerSearchOverlay({
               <PlayerQRGuideCard roomCode={activeRoom.room_code} variant="compact" />
             </div>
           )}
+        </div>
+        {isIdleGuideVisible && <PlayerIdleRoom roomCode={activeRoom?.room_code} />}
         </div>
       </section>
 

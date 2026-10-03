@@ -162,7 +162,7 @@ export default function PlayerPage() {
       {/* Ambient QR Badge on Idle */}
       {activeRoom && (
         <div className="absolute right-4 top-4 z-30 flex items-center gap-2">
-          {!isQueueBrowserActive && !showQRQuickModal && (
+          {nowPlaying && !isQueueBrowserActive && !showQRQuickModal && (
             <div
               aria-label="คีย์ลัด: Home เล่นซ้ำ, End จบเพลง, ลูกศรขึ้นลงดูเพลงในคิว, F11 เต็มจอหรือลดจอ"
               className="hidden items-center gap-1.5 rounded-full border border-white/10 bg-zinc-950/75 px-3 py-2 text-[11px] text-zinc-300 shadow-xl backdrop-blur-md sm:flex"
