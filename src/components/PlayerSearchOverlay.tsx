@@ -46,6 +46,7 @@ interface PlayerSearchOverlayProps {
 const MAX_VISIBLE_RESULTS = 7;
 const MIN_SEARCH_LENGTH = 2;
 const SUCCESS_MESSAGE_MS = 1800;
+const YOUTUBE_SEARCH_ANNOUNCER_MIN_MS = 900;
 
 const viewCountFormatter = new Intl.NumberFormat('th-TH', {
   notation: 'compact',
@@ -98,6 +99,7 @@ export function PlayerSearchOverlay({
   const inputRef = useRef<HTMLInputElement>(null);
   const lyricsInputRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef<AbortController | null>(null);
+  const youtubeSearchStartedAtRef = useRef<number | null>(null);
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const volumeFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queryRef = useRef('');
@@ -144,6 +146,7 @@ export function PlayerSearchOverlay({
   const isOpen = query.length > 0 || showPopular || showLyricsInput || localCatalog.panelOpen || localCatalog.busy === 'downloading';
   const isQueueBrowserActive = isQueueBrowserOpen && !isOpen;
   const isIdleGuideVisible = !nowPlaying && !isOpen && !isQueueBrowserActive;
+  const isYoutubeSearchLoading = status === 'loading' && searchSource === 'youtube';
   const selectedQueueItem =
     queue.find((item) => item.id === selectedQueueItemId) ?? queue[0] ?? null;
   const results = useMemo(
@@ -165,6 +168,7 @@ export function PlayerSearchOverlay({
   }, []);
 
   const closeSearch = useCallback(() => {
+    if (isYoutubeSearchLoading) return;
     requestRef.current?.abort();
     queryRef.current = '';
     setQuery('');
@@ -181,7 +185,7 @@ export function PlayerSearchOverlay({
     setShowLyricsInput(false);
     setIsLyricsModalOpen(false);
     window.requestAnimationFrame(focusSearchInput);
-  }, [focusSearchInput, setLocalPanelOpen]);
+  }, [focusSearchInput, isYoutubeSearchLoading, setLocalPanelOpen]);
 
   const toggleLyricsInput = useCallback(() => {
     const nextVisible = !showLyricsInput;
@@ -207,6 +211,7 @@ export function PlayerSearchOverlay({
   }, [focusSearchInput]);
 
   const updateQuery = useCallback((value: string) => {
+    if (isYoutubeSearchLoading) return;
     requestRef.current?.abort();
     setShowPopular(false);
     queryRef.current = value;
@@ -226,7 +231,7 @@ export function PlayerSearchOverlay({
     }
     setStatus('idle');
     setSearchSource('catalog');
-  }, [searchLocalCatalog]);
+  }, [isYoutubeSearchLoading, searchLocalCatalog]);
 
   const openPopular = useCallback(async () => {
     requestRef.current?.abort();
@@ -414,6 +419,7 @@ export function PlayerSearchOverlay({
 
     const controller = new AbortController();
     requestRef.current = controller;
+    youtubeSearchStartedAtRef.current = source === 'youtube' ? Date.now() : null;
     cancelLocalSearch();
     setStatus('loading');
     setSearchSource(source);
@@ -432,16 +438,30 @@ export function PlayerSearchOverlay({
           return;
         }
         onlineSource = 'youtube';
+        youtubeSearchStartedAtRef.current = Date.now();
         setSearchSource('youtube');
         setRawResults([]);
       }
       const { videos, source: resultSource } = await searchPlayerKaraoke(
         normalizedQuery, controller.signal, onlineSource, () => {
+          youtubeSearchStartedAtRef.current = Date.now();
           setSearchSource('youtube');
           setRawResults([]);
         }
       );
       if (controller.signal.aborted) return;
+
+      const youtubeSearchStartedAt = youtubeSearchStartedAtRef.current;
+      if (resultSource === 'youtube' && youtubeSearchStartedAt !== null) {
+        const remainingAnnouncerMs = Math.max(
+          0,
+          YOUTUBE_SEARCH_ANNOUNCER_MIN_MS - (Date.now() - youtubeSearchStartedAt)
+        );
+        if (remainingAnnouncerMs > 0) {
+          await new Promise((resolve) => window.setTimeout(resolve, remainingAnnouncerMs));
+        }
+        if (controller.signal.aborted) return;
+      }
 
       setRawResults(videos);
       setLocalResultsActive(false);
@@ -453,7 +473,10 @@ export function PlayerSearchOverlay({
       setStatus('error');
       setErrorMessage(error instanceof Error ? error.message : 'เกิดข้อผิดพลาดระหว่างค้นหา');
     } finally {
-      if (requestRef.current === controller) requestRef.current = null;
+      if (requestRef.current === controller) {
+        requestRef.current = null;
+        youtubeSearchStartedAtRef.current = null;
+      }
     }
   }, [query, localCatalog.mode, localCatalog.ready, cancelLocalSearch, localResultsActive, rawResults.length]);
 
@@ -468,6 +491,11 @@ export function PlayerSearchOverlay({
   const handlePlayerKeyDown = useCallback((event: KeyboardEvent) => {
     if (event.isComposing || event.defaultPrevented) return;
     if (isLyricsModalOpen) return;
+    if (isYoutubeSearchLoading) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
 
     const target = event.target;
     const isEditableTarget = target instanceof HTMLElement && Boolean(
@@ -625,6 +653,7 @@ export function PlayerSearchOverlay({
     isOpen,
     isLyricsModalOpen,
     isQueueBrowserOpen,
+    isYoutubeSearchLoading,
     moveQueueSelection,
     nowPlaying,
     onRestartCurrentSong,
@@ -672,6 +701,7 @@ export function PlayerSearchOverlay({
                 value={query}
                 onChange={(event) => updateQuery(event.target.value)}
                 onCompositionEnd={(event) => updateQuery(event.currentTarget.value)}
+                disabled={isYoutubeSearchLoading}
                 className="min-w-0 flex-1 bg-transparent text-xl font-semibold text-white outline-none placeholder:text-zinc-500 sm:text-3xl"
                 placeholder="ชื่อเพลง ศิลปิน เนื้อร้อง หรือลิงก์ YouTube..."
                 autoComplete="off"
@@ -957,6 +987,51 @@ export function PlayerSearchOverlay({
         {isIdleGuideVisible && <PlayerIdleRoom roomCode={activeRoom?.room_code} />}
         </div>
       </section>
+
+      {isYoutubeSearchLoading && (
+        <div
+          className="pointer-events-auto fixed inset-0 z-[80] flex items-center justify-center overflow-hidden bg-black/80 px-5 backdrop-blur-md"
+          role="status"
+          aria-live="assertive"
+          aria-busy="true"
+          aria-label="กำลังค้นหาเพลงจาก YouTube"
+        >
+          <div className="relative w-full max-w-lg overflow-hidden rounded-3xl border border-violet-300/30 bg-zinc-950/95 px-6 py-9 text-center shadow-[0_0_80px_rgba(139,92,246,0.35)] sm:px-10 sm:py-12">
+            <div className="pointer-events-none absolute -left-20 -top-24 h-56 w-56 rounded-full bg-violet-600/20 blur-3xl" />
+            <div className="pointer-events-none absolute -bottom-28 -right-16 h-64 w-64 rounded-full bg-fuchsia-600/15 blur-3xl" />
+
+            <div className="relative mx-auto mb-7 flex h-24 w-24 items-center justify-center">
+              <div className="absolute inset-0 rounded-full border border-violet-300/30 animate-ping" />
+              <div className="absolute inset-2 rounded-full border border-fuchsia-300/40 animate-[spin_3s_linear_infinite]" />
+              <div className="absolute inset-4 rounded-full border border-violet-400/30 animate-[spin_2s_linear_infinite_reverse]" />
+              <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white shadow-lg shadow-violet-950/60 animate-pulse">
+                <Music2 className="h-8 w-8" aria-hidden="true" />
+              </div>
+            </div>
+
+            <p className="relative text-xs font-bold uppercase tracking-[0.28em] text-violet-300">
+              YouTube Search
+            </p>
+            <h2 className="relative mt-3 text-2xl font-black text-white sm:text-3xl">
+              ไม่พบในคลัง กำลังค้นหาจาก YouTube
+            </h2>
+            <p className="relative mx-auto mt-4 max-w-md truncate rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-base font-semibold text-violet-100 sm:text-lg">
+              “{trimmedQuery}”
+            </p>
+            <div className="relative mt-6 flex items-center justify-center gap-1.5" aria-hidden="true">
+              <span className="h-2 w-2 rounded-full bg-violet-300 animate-bounce [animation-delay:-0.3s]" />
+              <span className="h-2 w-2 rounded-full bg-fuchsia-300 animate-bounce [animation-delay:-0.15s]" />
+              <span className="h-2 w-2 rounded-full bg-violet-300 animate-bounce" />
+            </div>
+            <p className="relative mt-5 text-sm text-zinc-300">
+              กรุณารอสักครู่ ระบบกำลังค้นหาเพลงและจัดอันดับผลลัพธ์ให้คุณ
+            </p>
+            <p className="relative mt-2 text-xs font-semibold text-zinc-500">
+              กำลังค้นหาอยู่ — ยังไม่สามารถเปลี่ยนคำค้นหรือกดปุ่มอื่นได้
+            </p>
+          </div>
+        </div>
+      )}
 
       {isQueueBrowserActive && (
         <section
