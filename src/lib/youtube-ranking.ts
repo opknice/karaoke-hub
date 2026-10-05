@@ -69,7 +69,7 @@ function normalizeForRelevance(value: string): string {
   return normalized.replace(/\s+/g, ' ').trim();
 }
 
-function tokenizeForRelevance(value: string): string[] {
+export function tokenizeYouTubeSearchText(value: string): string[] {
   const normalized = normalizeForRelevance(value);
   if (!normalized) return [];
   if (!THAI_WORD_SEGMENTER) return normalized.split(' ').filter(Boolean);
@@ -80,23 +80,23 @@ function tokenizeForRelevance(value: string): string[] {
 }
 
 function hasExactTokenSequence(candidate: string, query: string): boolean {
-  const candidateTokens = tokenizeForRelevance(candidate);
-  const queryTokens = tokenizeForRelevance(query);
+  const candidateTokens = tokenizeYouTubeSearchText(candidate);
+  const queryTokens = tokenizeYouTubeSearchText(query);
   return candidateTokens.length === queryTokens.length
     && candidateTokens.every((token, index) => token === queryTokens[index]);
 }
 
 function startsWithTokenSequence(candidate: string, query: string): boolean {
-  const candidateTokens = tokenizeForRelevance(candidate);
-  const queryTokens = tokenizeForRelevance(query);
+  const candidateTokens = tokenizeYouTubeSearchText(candidate);
+  const queryTokens = tokenizeYouTubeSearchText(query);
   return queryTokens.length > 0
     && candidateTokens.length >= queryTokens.length
     && queryTokens.every((token, index) => token === candidateTokens[index]);
 }
 
 function containsTokenSequence(candidate: string, query: string): boolean {
-  const candidateTokens = tokenizeForRelevance(candidate);
-  const queryTokens = tokenizeForRelevance(query);
+  const candidateTokens = tokenizeYouTubeSearchText(candidate);
+  const queryTokens = tokenizeYouTubeSearchText(query);
   if (queryTokens.length === 0 || candidateTokens.length < queryTokens.length) return false;
   return candidateTokens.some((_, start) => (
     start + queryTokens.length <= candidateTokens.length
@@ -104,12 +104,52 @@ function containsTokenSequence(candidate: string, query: string): boolean {
   ));
 }
 
+function editDistance(left: string, right: string): number {
+  const leftCharacters = [...left];
+  const rightCharacters = [...right];
+  let previous = Array.from({ length: rightCharacters.length + 1 }, (_, index) => index);
+
+  for (let leftIndex = 0; leftIndex < leftCharacters.length; leftIndex++) {
+    const current = [leftIndex + 1];
+    for (let rightIndex = 0; rightIndex < rightCharacters.length; rightIndex++) {
+      current.push(leftCharacters[leftIndex] === rightCharacters[rightIndex]
+        ? previous[rightIndex]
+        : 1 + Math.min(previous[rightIndex], current[rightIndex], previous[rightIndex + 1]));
+    }
+    previous = current;
+  }
+  return previous[rightCharacters.length];
+}
+
+function isFuzzyTokenSequence(candidate: string, query: string): boolean {
+  const candidateTokens = tokenizeYouTubeSearchText(candidate);
+  const queryTokens = tokenizeYouTubeSearchText(query);
+  if (
+    queryTokens.length === 0
+    || candidateTokens.length !== queryTokens.length
+    || normalizeYouTubeSearchText(query).length < 4
+  ) return false;
+
+  let changedTokens = 0;
+  for (let index = 0; index < queryTokens.length; index++) {
+    const queryToken = queryTokens[index];
+    const candidateToken = candidateTokens[index];
+    if (queryToken === candidateToken) continue;
+    if (queryToken.length < 3 || candidateToken.length < 3) return false;
+    if (editDistance(queryToken, candidateToken) > 1) return false;
+    changedTokens++;
+  }
+  return changedTokens > 0;
+}
+
 function getSongTitleCandidates(value: string): string[] {
   const withoutBracketedMetadata = value.replace(BRACKETED_TITLE_METADATA, ' ');
   const separatorParts = withoutBracketedMetadata.split(TITLE_ARTIST_SEPARATOR);
+  const bracketedMetadata = value.match(BRACKETED_TITLE_METADATA) ?? [];
 
   return [
     ...separatorParts.map(normalizeForRelevance),
+    ...bracketedMetadata.map(normalizeForRelevance),
     normalizeForRelevance(withoutBracketedMetadata),
     normalizeForRelevance(value),
   ].filter((candidate, index, candidates) => (
@@ -148,6 +188,7 @@ export function getSearchRelevanceTier(
   if (primaryCandidates.some((primary) => (
     primary.includes(normalizedQuery) || containsTokenSequence(primary, normalizedQuery)
   ))) return 3;
+  if (primaryCandidates.some((primary) => isFuzzyTokenSequence(primary, normalizedQuery))) return 2;
   if (primaryCandidates.some((primary) => containsEveryToken(primary, normalizedQuery))) return 2;
   if (
     secondary.includes(normalizedQuery) ||

@@ -5,11 +5,18 @@ export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
   const cursor = request.nextUrl.searchParams.get('cursor');
+  const since = request.nextUrl.searchParams.get('since');
+  const until = request.nextUrl.searchParams.get('until');
   if (cursor !== null && !/^[A-Za-z0-9_-]{11}$/.test(cursor)) {
     return NextResponse.json({ success: false, error: 'cursor ไม่ถูกต้อง' }, { status: 400 });
   }
+  for (const [name, value] of [['since', since], ['until', until]] as const) {
+    if (value !== null && !Number.isFinite(Date.parse(value))) {
+      return NextResponse.json({ success: false, error: `${name} ไม่ถูกต้อง` }, { status: 400 });
+    }
+  }
   try {
-    return NextResponse.json(await getLocalCatalogPage(cursor), {
+    return NextResponse.json(await getLocalCatalogPage(cursor, since, until), {
       headers: { 'Cache-Control': 'private, no-store' },
     });
   } catch {

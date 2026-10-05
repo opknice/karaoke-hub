@@ -9,10 +9,12 @@ import {
   downloadLocalCatalog,
   getLocalCatalogMeta,
   readLocalCatalogSongs,
+  syncLocalCatalog,
 } from './local-catalog-storage';
 
 export type CatalogMode = 'supabase' | 'local';
 const PREFERENCE_KEY = 'karaoke-catalog-mode-v1';
+const AUTO_SYNC_INTERVAL_MS = 60_000;
 
 export function useLocalCatalog(
   onResults: (query: string, results: YouTubeVideo[]) => void,
@@ -23,18 +25,22 @@ export function useLocalCatalog(
   const [meta, setMeta] = useState<LocalCatalogMeta | null>(null);
   const [stale, setStale] = useState(false);
   const [ready, setReady] = useState(false);
-  const [busy, setBusy] = useState<'loading' | 'downloading' | 'deleting' | null>(null);
+  const [busy, setBusy] = useState<'loading' | 'downloading' | 'syncing' | 'deleting' | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
   const [panelOpen, setPanelOpen] = useState(false);
   const workerRef = useRef<Worker | null>(null);
   const workerReadyRef = useRef(false);
   const downloadRef = useRef<AbortController | null>(null);
+  const syncRef = useRef<AbortController | null>(null);
+  const metaRef = useRef<LocalCatalogMeta | null>(null);
+  const skipNextAutoSyncRef = useRef(false);
   const requestIdRef = useRef(0);
   const workerVersionRef = useRef(0);
   const modeRef = useRef<CatalogMode>('supabase');
   const callbacksRef = useRef({ onResults, onReady });
   useEffect(() => { callbacksRef.current = { onResults, onReady }; }, [onResults, onReady]);
+  useEffect(() => { metaRef.current = meta; }, [meta]);
 
   const disposeWorker = useCallback(() => {
     workerVersionRef.current++;
@@ -108,6 +114,7 @@ export function useLocalCatalog(
     let active = true;
     getLocalCatalogMeta().then((stored) => {
       if (!active) return;
+      metaRef.current = stored;
       setMeta(stored);
       setStale(Boolean(stored && Date.now() - Date.parse(stored.updatedAt) > 7 * 86400_000));
       if (stored && localStorage.getItem(PREFERENCE_KEY) === 'local') {
@@ -126,6 +133,7 @@ export function useLocalCatalog(
     return () => {
       active = false;
       downloadRef.current?.abort();
+      syncRef.current?.abort();
       disposeWorker();
     };
   }, [loadWorker, disposeWorker]);
@@ -141,6 +149,7 @@ export function useLocalCatalog(
   const cancelSearch = useCallback(() => { requestIdRef.current++; }, []);
 
   const chooseSupabase = useCallback(() => {
+    syncRef.current?.abort();
     modeRef.current = 'supabase';
     requestIdRef.current++;
     setMode('supabase');
@@ -159,7 +168,7 @@ export function useLocalCatalog(
   }, [meta, busy, loadWorker]);
 
   const download = useCallback(async () => {
-    if (downloadRef.current) return;
+    if (downloadRef.current || syncRef.current) return;
     const controller = new AbortController();
     downloadRef.current = controller;
     setBusy('downloading');
@@ -167,12 +176,14 @@ export function useLocalCatalog(
     setError('');
     try {
       const snapshot = await downloadLocalCatalog(controller.signal, setProgress);
+      metaRef.current = snapshot;
       setMeta(snapshot);
       setStale(false);
       modeRef.current = 'local';
       setMode('local');
       localStorage.setItem(PREFERENCE_KEY, 'local');
       setPanelOpen(false);
+      skipNextAutoSyncRef.current = true;
       await loadWorker(snapshot);
     } catch (cause) {
       if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'ดาวน์โหลดคลังไม่สำเร็จ');
@@ -184,8 +195,58 @@ export function useLocalCatalog(
 
   const cancelDownload = useCallback(() => downloadRef.current?.abort(), []);
 
+  const sync = useCallback(async () => {
+    const snapshot = metaRef.current;
+    if (modeRef.current !== 'local' || !snapshot || downloadRef.current || syncRef.current) return;
+    const controller = new AbortController();
+    syncRef.current = controller;
+    setBusy('syncing');
+    setProgress(0);
+    setError('');
+    try {
+      const result = await syncLocalCatalog(snapshot, controller.signal, setProgress);
+      if (controller.signal.aborted) return;
+      metaRef.current = result.meta;
+      setMeta(result.meta);
+      setStale(false);
+      if (result.changed && modeRef.current === 'local') {
+        skipNextAutoSyncRef.current = true;
+        await loadWorker(result.meta);
+      }
+    } catch (cause) {
+      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'ซิงก์เพลงใหม่ไม่สำเร็จ');
+    } finally {
+      if (syncRef.current === controller) syncRef.current = null;
+      setBusy((current) => current === 'syncing' ? null : current);
+    }
+  }, [loadWorker]);
+
+  const metaGeneration = meta?.generation;
+  useEffect(() => {
+    if (!initialized || mode !== 'local' || !metaRef.current || !ready) return;
+    if (skipNextAutoSyncRef.current) {
+      skipNextAutoSyncRef.current = false;
+      return;
+    }
+    const run = () => { void sync(); };
+    run();
+    const interval = window.setInterval(run, AUTO_SYNC_INTERVAL_MS);
+    const onFocus = () => run();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') run();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [initialized, metaGeneration, mode, ready, sync]);
+
   const remove = useCallback(async () => {
     downloadRef.current?.abort();
+    syncRef.current?.abort();
     stopWorker();
     setBusy('deleting');
     setError('');
@@ -204,6 +265,6 @@ export function useLocalCatalog(
 
   return {
     mode, initialized, meta, stale, ready, busy, progress, error, panelOpen, setPanelOpen,
-    search, cancelSearch, chooseSupabase, chooseLocal, download, cancelDownload, remove,
+    search, cancelSearch, chooseSupabase, chooseLocal, download, cancelDownload, sync, remove,
   };
 }

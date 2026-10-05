@@ -227,6 +227,20 @@ test('tokenized title candidates recognize artist-first title formats', () => {
     'the song-title side of an artist-first title is an exact match');
 });
 
+test('search ranking accepts Thai typos and romanized title metadata', () => {
+  const { getSearchRelevanceTier } = loader()('src/lib/youtube-ranking.ts');
+  const video = {
+    id: 'wad-wai', youtube_video_id: 'CAYSVrjYFw0',
+    title: 'คาราโอเกะ วาดไว้ (Wad-Wai) [Original Karaoke]',
+    channel_name: 'Karaoke', thumbnail_url: '', duration: 240,
+    embeddable: true, karaoke_score: 90,
+  };
+  assert.equal(getSearchRelevanceTier(video, 'wad wai'), 5,
+    'romanized bracket metadata is treated as a title alias');
+  assert.equal(getSearchRelevanceTier(video, 'วาดใว้'), 2,
+    'a one-character Thai typo remains searchable below exact matches');
+});
+
 test('official titles with transliteration and artist metadata remain exact song matches', () => {
   const load = loader();
   const { getSearchRelevanceTier, rankKaraokeVideos } = load('src/lib/youtube-ranking.ts');

@@ -7,6 +7,13 @@ import type { YouTubeVideo } from './types';
 
 const PAGE_SIZE = 500;
 
+function parseTimestamp(value: string | null, name: string): string | null {
+  if (value === null) return null;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) throw new RangeError(`${name} ไม่ถูกต้อง`);
+  return new Date(timestamp).toISOString();
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -28,10 +35,20 @@ function publicVideo(video: YouTubeVideo): YouTubeVideo {
   };
 }
 
-export async function getLocalCatalogPage(cursor: string | null): Promise<LocalCatalogPage> {
+export async function getLocalCatalogPage(
+  cursor: string | null,
+  since: string | null = null,
+  until: string | null = null,
+): Promise<LocalCatalogPage> {
   if (cursor !== null && !/^[A-Za-z0-9_-]{11}$/.test(cursor)) {
     throw new RangeError('cursor ไม่ถูกต้อง');
   }
+  const normalizedSince = parseTimestamp(since, 'since');
+  const normalizedUntil = parseTimestamp(until, 'until');
+  if (normalizedSince && normalizedUntil && Date.parse(normalizedSince) > Date.parse(normalizedUntil)) {
+    throw new RangeError('ช่วงเวลาซิงก์ไม่ถูกต้อง');
+  }
+  const snapshotAt = normalizedUntil ?? new Date().toISOString();
   const params = new URLSearchParams({
     select: 'video_id,expires_at,payload',
     expires_at: `gt.${new Date().toISOString()}`,
@@ -40,6 +57,13 @@ export async function getLocalCatalogPage(cursor: string | null): Promise<LocalC
     limit: String(PAGE_SIZE),
   });
   if (cursor) params.set('video_id', `gt.${cursor}`);
+  if (normalizedSince && normalizedUntil) {
+    params.set('and', `(refreshed_at.gt.${normalizedSince},refreshed_at.lte.${normalizedUntil})`);
+  } else if (normalizedSince) {
+    params.set('refreshed_at', `gt.${normalizedSince}`);
+  } else if (normalizedUntil) {
+    params.set('refreshed_at', `lte.${normalizedUntil}`);
+  }
   const value = await catalogRest(`karaoke_catalog?${params.toString()}`);
   if (!Array.isArray(value)) throw new Error('รูปแบบข้อมูลคลังเพลงไม่ถูกต้อง');
 
@@ -56,7 +80,7 @@ export async function getLocalCatalogPage(cursor: string | null): Promise<LocalC
   return {
     success: true,
     schemaVersion: LOCAL_CATALOG_SCHEMA_VERSION,
-    generatedAt: new Date().toISOString(),
+    generatedAt: snapshotAt,
     songs,
     nextCursor,
     hasMore: value.length === PAGE_SIZE,

@@ -8,6 +8,12 @@ const META_STORE = 'meta';
 
 type StoredSong = LocalCatalogSong & { generation: string };
 
+export interface LocalCatalogSyncResult {
+  meta: LocalCatalogMeta;
+  changed: boolean;
+  updatedCount: number;
+}
+
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
@@ -104,6 +110,11 @@ async function removeGeneration(db: IDBDatabase, generation: string): Promise<vo
   await transactionDone(transaction);
 }
 
+async function countGeneration(db: IDBDatabase, generation: string): Promise<number> {
+  const transaction = db.transaction(SONGS_STORE, 'readonly');
+  return requestResult(transaction.objectStore(SONGS_STORE).index('generation').count(IDBKeyRange.only(generation)));
+}
+
 function parsePage(value: unknown): LocalCatalogPage {
   if (typeof value !== 'object' || value === null) throw new Error('ข้อมูลดาวน์โหลดไม่ถูกต้อง');
   const page = value as Partial<LocalCatalogPage>;
@@ -128,6 +139,7 @@ export async function downloadLocalCatalog(
   const generation = crypto.randomUUID();
   let cursor: string | null = null;
   const ids = new Set<string>();
+  let latestGeneratedAt: string | null = null;
   let previous: LocalCatalogMeta | null = null;
   try {
     previous = await activeMeta(db);
@@ -141,6 +153,7 @@ export async function downloadLocalCatalog(
       const response = await fetch(url, { signal, cache: 'no-store' });
       if (!response.ok) throw new Error('ดาวน์โหลดข้อมูลเพลงไม่สำเร็จ กรุณาลองใหม่');
       const page = parsePage(await response.json() as unknown);
+      latestGeneratedAt = page.generatedAt;
       if (page.hasMore && (!page.nextCursor || page.nextCursor === cursor)) {
         throw new Error('ลำดับหน้าข้อมูลคลังไม่ถูกต้อง');
       }
@@ -163,7 +176,7 @@ export async function downloadLocalCatalog(
       schemaVersion: LOCAL_CATALOG_SCHEMA_VERSION,
       generation,
       count: ids.size,
-      updatedAt: new Date().toISOString(),
+      updatedAt: latestGeneratedAt ?? new Date().toISOString(),
     };
     const transaction = db.transaction(META_STORE, 'readwrite');
     transaction.objectStore(META_STORE).put({ key: 'active', ...meta });
@@ -182,6 +195,79 @@ export async function downloadLocalCatalog(
         await transactionDone(transaction);
       }
     } finally { db.close(); }
+    throw error;
+  }
+}
+
+export async function syncLocalCatalog(
+  snapshot: LocalCatalogMeta,
+  signal: AbortSignal,
+  onProgress: (count: number) => void,
+): Promise<LocalCatalogSyncResult> {
+  const db = await openDatabase();
+  let cursor: string | null = null;
+  let until: string | null = null;
+  let updatedCount = 0;
+  let changed = false;
+  try {
+    const current = await activeMeta(db);
+    if (!current || current.generation !== snapshot.generation) {
+      throw new Error('คลังในเครื่องเปลี่ยนไประหว่างซิงก์ กรุณาลองใหม่');
+    }
+    if (current.count !== snapshot.count || current.updatedAt !== snapshot.updatedAt) {
+      if (Date.parse(current.updatedAt) >= Date.parse(snapshot.updatedAt)) {
+        db.close();
+        return { meta: current, changed: true, updatedCount: 0 };
+      }
+      throw new Error('คลังในเครื่องเปลี่ยนไประหว่างซิงก์ กรุณาลองใหม่');
+    }
+
+    do {
+      signal.throwIfAborted();
+      const url = new URL('/api/catalog/export', window.location.origin);
+      url.searchParams.set('since', snapshot.updatedAt);
+      if (until) url.searchParams.set('until', until);
+      if (cursor) url.searchParams.set('cursor', cursor);
+      const response = await fetch(url, { signal, cache: 'no-store' });
+      if (!response.ok) throw new Error('ซิงก์เพลงใหม่ไม่สำเร็จ กรุณาลองใหม่');
+      const page = parsePage(await response.json() as unknown);
+      if (!until) until = page.generatedAt;
+      if (page.generatedAt !== until) throw new Error('ช่วงเวลาซิงก์เพลงไม่คงที่');
+      if (page.hasMore && (!page.nextCursor || page.nextCursor === cursor)) {
+        throw new Error('ลำดับหน้าข้อมูลคลังไม่ถูกต้อง');
+      }
+
+      if (page.songs.length > 0) {
+        const transaction = db.transaction(SONGS_STORE, 'readwrite');
+        const store = transaction.objectStore(SONGS_STORE);
+        for (const song of page.songs) {
+          store.put({ ...song, generation: snapshot.generation } satisfies StoredSong);
+        }
+        await transactionDone(transaction);
+        changed = true;
+        updatedCount += page.songs.length;
+      }
+      onProgress(updatedCount);
+      cursor = page.nextCursor;
+      if (!page.hasMore) break;
+    } while (true);
+
+    signal.throwIfAborted();
+    const count = await countGeneration(db, snapshot.generation);
+    if (count === 0) throw new Error('คลังเพลงในเครื่องว่างเปล่า กรุณาดาวน์โหลดใหม่');
+    const meta: LocalCatalogMeta = {
+      schemaVersion: LOCAL_CATALOG_SCHEMA_VERSION,
+      generation: snapshot.generation,
+      count,
+      updatedAt: until ?? new Date().toISOString(),
+    };
+    const transaction = db.transaction(META_STORE, 'readwrite');
+    transaction.objectStore(META_STORE).put({ key: 'active', ...meta });
+    await transactionDone(transaction);
+    db.close();
+    return { meta, changed, updatedCount };
+  } catch (error) {
+    db.close();
     throw error;
   }
 }

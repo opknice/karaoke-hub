@@ -69,7 +69,15 @@ test('local catalog export uses keyset pages, filters songs and whitelists metad
     assert.equal(queries.length, 2);
     assert.equal(queries[1].searchParams.get('video_id'), 'gt.00000000499');
     assert.equal(new Set([...first.songs, ...second.songs].map((song) => song.video_id)).size, 502);
+    const since = '2026-10-01T00:00:00.000Z';
+    const until = '2026-10-05T00:00:00.000Z';
+    await api.getLocalCatalogPage(null, since, until);
+    assert.equal(queries[2].searchParams.get('and'), `(refreshed_at.gt.${since},refreshed_at.lte.${until})`);
+    assert.equal(queries[2].searchParams.get('refreshed_at'), null);
+    await api.getLocalCatalogPage(null, since);
+    assert.equal(queries[3].searchParams.get('refreshed_at'), `gt.${since}`);
     await assert.rejects(() => api.getLocalCatalogPage('invalid!'), RangeError);
+    await assert.rejects(() => api.getLocalCatalogPage(null, 'not-a-date'), RangeError);
   } finally {
     global.fetch = originalFetch;
     process.env.NEXT_PUBLIC_SUPABASE_URL = originalUrl;

@@ -778,11 +778,13 @@ export function PlayerSearchOverlay({
                 <p className="font-semibold text-white">คลังเพลงในเครื่อง</p>
                 <p>เก็บเฉพาะข้อมูลชื่อเพลงและข้อมูลค้นหาในเบราว์เซอร์เครื่องนี้ ไม่ดาวน์โหลดเสียง วิดีโอ หรือรูปปก เพลงยังต้องใช้อินเทอร์เน็ตเพื่อเข้าคิวและเล่น</p>
                 <p className="text-zinc-400">จำนวนเพลงและขนาดดาวน์โหลดขึ้นอยู่กับคลังปัจจุบันและการคัดกรอง อาจใช้พื้นที่หลาย MB</p>
+                <p className="text-sky-300">เมื่อเลือก “ในเครื่อง” ระบบจะตรวจ Supabase อัตโนมัติทุก 1 นาทีและเมื่อกลับมาที่หน้านี้ แล้วดึงเฉพาะเพลงใหม่</p>
                 {localCatalog.meta && (
-                  <p className="text-violet-300">มี {localCatalog.meta.count.toLocaleString('th-TH')} เพลง · อัปเดต {new Date(localCatalog.meta.updatedAt).toLocaleString('th-TH')}{localCatalog.stale ? ' · ควรอัปเดต' : ''}</p>
+                  <p className="text-violet-300">มี {localCatalog.meta.count.toLocaleString('th-TH')} เพลง · อัปเดต {new Date(localCatalog.meta.updatedAt).toLocaleString('th-TH')}{localCatalog.stale ? ' · กำลังรอตรวจซิงก์' : ''}</p>
                 )}
                 {localCatalog.busy === 'loading' && <p>กำลังเตรียมดัชนีค้นหา...</p>}
                 {localCatalog.busy === 'downloading' && <p>ดาวน์โหลดแล้ว {localCatalog.progress.toLocaleString('th-TH')} เพลง...</p>}
+                {localCatalog.busy === 'syncing' && <p className="text-sky-300">กำลังตรวจและซิงก์เพลงใหม่ {localCatalog.progress > 0 ? `เพิ่มแล้ว ${localCatalog.progress.toLocaleString('th-TH')} เพลง` : 'แบบอัตโนมัติ'}...</p>}
                 {localCatalog.error && <p role="alert" className="text-rose-400">{localCatalog.error}</p>}
                 <div className="flex flex-wrap gap-2">
                   {localCatalog.busy === 'downloading' ? (
@@ -790,7 +792,7 @@ export function PlayerSearchOverlay({
                   ) : (
                     <button type="button" disabled={localCatalog.busy !== null} onClick={() => void localCatalog.download()}
                       className="rounded-lg bg-violet-700 px-3 py-1.5 font-semibold text-white hover:bg-violet-600 disabled:opacity-50">
-                      {localCatalog.meta ? 'อัปเดตคลัง' : 'ดาวน์โหลดคลัง'}
+                      {localCatalog.meta ? 'ดาวน์โหลดใหม่ทั้งหมด' : 'ดาวน์โหลดคลัง'}
                     </button>
                   )}
                   {localCatalog.meta && (

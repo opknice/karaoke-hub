@@ -6,7 +6,11 @@ import {
   isOfficialChannelTitleExcluded,
   type OfficialYouTubeChannel,
 } from './official-youtube-channels';
-import { normalizeYouTubeSearchText, rankKaraokeVideos } from './youtube-ranking';
+import {
+  normalizeYouTubeSearchText,
+  rankKaraokeVideos,
+  tokenizeYouTubeSearchText,
+} from './youtube-ranking';
 import { isYouTubeVideo } from './youtube-video-validation';
 import { videosFromDetailsPayload } from './youtube';
 import type { YouTubeVideo } from './types';
@@ -81,6 +85,17 @@ async function searchLegacyCatalog(
   return uniqueVideos([catalogVideos(general), catalogVideos(titlePrefix)]);
 }
 
+async function searchFuzzyCatalogCandidates(normalizedQuery: string): Promise<YouTubeVideo[]> {
+  const prefixes = tokenizeYouTubeSearchText(normalizedQuery)
+    .filter((token) => [...token].length >= 2)
+    .slice(0, 2)
+    .map((token) => `%${[...token].slice(0, Math.max(2, [...token].length - 1)).join('')}%`);
+  if (!prefixes.length) return [];
+  return uniqueVideos(await Promise.all(prefixes.map((pattern) => (
+    searchLegacyCatalog(normalizedQuery, [pattern])
+  ))));
+}
+
 async function searchCatalogCandidates(
   normalizedQuery: string,
   patterns: readonly string[]
@@ -95,7 +110,8 @@ async function searchCatalogCandidates(
         }),
       });
       rankedCatalogUnavailableUntil = 0;
-      return catalogVideos(value);
+      const candidates = catalogVideos(value);
+      return candidates.length ? candidates : searchFuzzyCatalogCandidates(normalizedQuery);
     } catch {
       // Keep existing deployments working until the v2 migration is installed.
       rankedCatalogUnavailableUntil = Date.now() + RANKED_CATALOG_RETRY_DELAY;
