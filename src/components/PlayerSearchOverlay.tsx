@@ -817,7 +817,7 @@ export function PlayerSearchOverlay({
                 <span>Esc ปิดค้นหา • Home เริ่มเพลงใหม่ • End ข้ามเพลงปัจจุบัน</span>
                 <div className="flex w-full flex-wrap items-center gap-2 pt-1 text-sm font-semibold text-zinc-100">
                   <span>ยังไม่เจอเพลงที่ต้องการ?</span>
-                  <button hidden type="button" disabled={status === 'loading' || trimmedQuery.length < 2 || isDirectVideoQuery(query)}
+                  <button type="button" disabled={status === 'loading' || trimmedQuery.length < 2 || isDirectVideoQuery(query)}
                     onClick={() => void submitSearch('youtube')}
                     className="rounded-lg border border-violet-300/60 bg-violet-500/20 px-3 py-1.5 font-semibold text-violet-50 shadow-sm hover:bg-violet-500/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300 disabled:opacity-40">
                     ค้นเพิ่มบน YouTube
