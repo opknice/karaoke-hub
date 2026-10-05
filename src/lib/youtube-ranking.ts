@@ -47,6 +47,9 @@ const SEARCH_NOISE_PHRASES = [
 const BRACKETED_TITLE_METADATA = /\([^)]*\)|\[[^\]]*\]|\{[^}]*\}/gu;
 const TITLE_ARTIST_SEPARATOR =
   /\s+[-–—|/:：•·]\s*|(?<=[\u0E00-\u0E7F])[-–—](?=[A-Za-z])/u;
+const THAI_WORD_SEGMENTER = typeof Intl !== 'undefined' && 'Segmenter' in Intl
+  ? new Intl.Segmenter('th', { granularity: 'word' })
+  : null;
 
 export function normalizeYouTubeSearchText(value: string): string {
   return value
@@ -66,12 +69,47 @@ function normalizeForRelevance(value: string): string {
   return normalized.replace(/\s+/g, ' ').trim();
 }
 
+function tokenizeForRelevance(value: string): string[] {
+  const normalized = normalizeForRelevance(value);
+  if (!normalized) return [];
+  if (!THAI_WORD_SEGMENTER) return normalized.split(' ').filter(Boolean);
+  return [...THAI_WORD_SEGMENTER.segment(normalized)]
+    .filter(({ isWordLike }) => isWordLike !== false)
+    .map(({ segment }) => segment)
+    .filter(Boolean);
+}
+
+function hasExactTokenSequence(candidate: string, query: string): boolean {
+  const candidateTokens = tokenizeForRelevance(candidate);
+  const queryTokens = tokenizeForRelevance(query);
+  return candidateTokens.length === queryTokens.length
+    && candidateTokens.every((token, index) => token === queryTokens[index]);
+}
+
+function startsWithTokenSequence(candidate: string, query: string): boolean {
+  const candidateTokens = tokenizeForRelevance(candidate);
+  const queryTokens = tokenizeForRelevance(query);
+  return queryTokens.length > 0
+    && candidateTokens.length >= queryTokens.length
+    && queryTokens.every((token, index) => token === candidateTokens[index]);
+}
+
+function containsTokenSequence(candidate: string, query: string): boolean {
+  const candidateTokens = tokenizeForRelevance(candidate);
+  const queryTokens = tokenizeForRelevance(query);
+  if (queryTokens.length === 0 || candidateTokens.length < queryTokens.length) return false;
+  return candidateTokens.some((_, start) => (
+    start + queryTokens.length <= candidateTokens.length
+    && queryTokens.every((token, offset) => token === candidateTokens[start + offset])
+  ));
+}
+
 function getSongTitleCandidates(value: string): string[] {
   const withoutBracketedMetadata = value.replace(BRACKETED_TITLE_METADATA, ' ');
-  const [titleBeforeArtist = ''] = withoutBracketedMetadata.split(TITLE_ARTIST_SEPARATOR, 1);
+  const separatorParts = withoutBracketedMetadata.split(TITLE_ARTIST_SEPARATOR);
 
   return [
-    normalizeForRelevance(titleBeforeArtist),
+    ...separatorParts.map(normalizeForRelevance),
     normalizeForRelevance(withoutBracketedMetadata),
     normalizeForRelevance(value),
   ].filter((candidate, index, candidates) => (
@@ -101,9 +139,15 @@ export function getSearchRelevanceTier(
     : getSongTitleCandidates(video.title);
   const secondary = mode === 'artist' ? title : artistAndChannel;
 
-  if (primaryCandidates.some((primary) => primary === normalizedQuery)) return 5;
-  if (primaryCandidates.some((primary) => primary.startsWith(normalizedQuery))) return 4;
-  if (primaryCandidates.some((primary) => primary.includes(normalizedQuery))) return 3;
+  if (primaryCandidates.some((primary) => (
+    primary === normalizedQuery || hasExactTokenSequence(primary, normalizedQuery)
+  ))) return 5;
+  if (primaryCandidates.some((primary) => (
+    primary.startsWith(normalizedQuery) || startsWithTokenSequence(primary, normalizedQuery)
+  ))) return 4;
+  if (primaryCandidates.some((primary) => (
+    primary.includes(normalizedQuery) || containsTokenSequence(primary, normalizedQuery)
+  ))) return 3;
   if (primaryCandidates.some((primary) => containsEveryToken(primary, normalizedQuery))) return 2;
   if (
     secondary.includes(normalizedQuery) ||

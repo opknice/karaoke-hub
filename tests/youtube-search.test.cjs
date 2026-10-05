@@ -183,7 +183,7 @@ test('official identity and karaoke strength precede views within matching relev
   assert.equal(getOfficialYouTubeChannel(base.channel_id), undefined, 'official-looking names are not evidence');
   assert.equal(getOfficialYouTubeChannel(undefined), undefined);
   assert.equal(getOfficialYouTubeChannel(officialId.toLowerCase()), undefined, 'channel IDs are case sensitive');
-  assert.deepEqual(rank([base, { ...official, title: 'เพลงอื่น karaoke' }]), ['popular', 'official']);
+  assert.deepEqual(rank([base, { ...official, title: 'เพลงอื่น karaoke' }]), ['official', 'popular']);
   assert.deepEqual(rank([base, { ...official, embeddable: false }]), ['popular']);
   assert.deepEqual(rank([base, { ...official, title: 'ขอบฟ้า bodyslam Official MV', channel_name: 'Record label' }]), ['popular']);
   assert.deepEqual(rank([base, official], 'เนื้อร้องที่ไม่ตรงชื่อ'), ['official', 'popular'],
@@ -198,7 +198,7 @@ test('official identity and karaoke strength precede views within matching relev
     ['strong-karaoke', 'weak-karaoke'], 'clear karaoke metadata precedes views');
 });
 
-test('an exact song title outranks an official title that only starts with the query', () => {
+test('official priority outranks an exact song title when both results are eligible', () => {
   const { getSearchRelevanceTier, rankKaraokeVideos } = loader()('src/lib/youtube-ranking.ts');
   const common = { thumbnail_url: '', duration: 240, embeddable: true, karaoke_score: 80 };
   const exact = { ...common, id: 'exact', youtube_video_id: 'CAYSVrjYFw0',
@@ -212,7 +212,19 @@ test('an exact song title outranks an official title that only starts with the q
   assert.equal(getSearchRelevanceTier(exact, 'ทน'), 5);
   assert.equal(getSearchRelevanceTier(officialPrefix, 'ทน'), 4);
   assert.deepEqual(rankKaraokeVideos([officialPrefix, exact], 'ทน').map(video => video.id),
-    ['exact', 'official-prefix']);
+    ['official-prefix', 'exact']);
+});
+
+test('tokenized title candidates recognize artist-first title formats', () => {
+  const { getSearchRelevanceTier } = loader()('src/lib/youtube-ranking.ts');
+  const video = {
+    id: 'whattheduck', youtube_video_id: 'xbJisx3QAMU',
+    title: 'BOWKYLION - วาดไว้ (recall) | SPECIAL VERSION [Official Karaoke]',
+    channel_id: 'UCkKeG3Vz6R0JZowsYE2hMHQ', channel_name: 'Whattheduck',
+    thumbnail_url: '', duration: 279, embeddable: true, karaoke_score: 92,
+  };
+  assert.equal(getSearchRelevanceTier(video, 'วาดไว้'), 5,
+    'the song-title side of an artist-first title is an exact match');
 });
 
 test('official titles with transliteration and artist metadata remain exact song matches', () => {
@@ -256,12 +268,12 @@ test('optimized ranking preserves the original order across song and artist sear
     .filter(video => getKaraokeTier(video) > 0)
     .map((video, originalIndex) => ({ video, originalIndex }))
     .sort((left, right) => {
-      const relevance = getSearchRelevanceTier(right.video, query, mode)
-        - getSearchRelevanceTier(left.video, query, mode);
-      if (relevance !== 0) return relevance;
       const official = Number(Boolean(getOfficialYouTubeChannel(right.video.channel_id)))
         - Number(Boolean(getOfficialYouTubeChannel(left.video.channel_id)));
       if (official !== 0) return official;
+      const relevance = getSearchRelevanceTier(right.video, query, mode)
+        - getSearchRelevanceTier(left.video, query, mode);
+      if (relevance !== 0) return relevance;
       const karaoke = getKaraokeTier(right.video) - getKaraokeTier(left.video);
       if (karaoke !== 0) return karaoke;
       const leftHasViews = left.video.views_count !== undefined;
@@ -522,7 +534,7 @@ test('catalog search falls back to an indexed title-prefix pool before the v2 RP
   try {
     const api = loader()('src/lib/youtube-catalog.ts');
     const result = await api.searchCatalog('ทน');
-    assert.deepEqual(result.map(video => video.id), ['exact', 'official-prefix']);
+    assert.deepEqual(result.map(video => video.id), ['official-prefix', 'exact']);
     assert.deepEqual(requests, [['%ทน%'], ['ทน%']]);
   } finally {
     global.fetch = originalFetch;
