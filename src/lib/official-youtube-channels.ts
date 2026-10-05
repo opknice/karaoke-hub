@@ -123,6 +123,20 @@ export const OFFICIAL_YOUTUBE_CHANNELS: readonly OfficialYouTubeChannel[] = [
     evidenceUrl: 'https://www.youtube.com/@pramotevilepanavevo',
     reviewedAt: '2026-10-05',
   },
+  {
+    channelId: 'UCf7sAdMN1GyhbVUOx2uSlKA',
+    name: 'Karaoke Channel & Entertainment',
+    url: 'https://www.youtube.com/@KaraokeChannel2018',
+    evidenceUrl: 'https://www.youtube.com/@KaraokeChannel2018',
+    reviewedAt: '2026-10-05',
+  },
+  {
+    channelId: 'UCYVuYvc9UJIb49gZ0meImPw',
+    name: 'คาราโอเกะ พลัส',
+    url: 'https://www.youtube.com/@คาราโอเกะพลัส',
+    evidenceUrl: 'https://www.youtube.com/@คาราโอเกะพลัส',
+    reviewedAt: '2026-10-05',
+  },
 ];
 
 const channelsById = new Map(OFFICIAL_YOUTUBE_CHANNELS.map((channel) => [channel.channelId, channel]));

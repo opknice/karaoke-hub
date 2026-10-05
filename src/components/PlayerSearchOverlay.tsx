@@ -52,10 +52,13 @@ const viewCountFormatter = new Intl.NumberFormat('th-TH', {
   maximumFractionDigits: 1,
 });
 
-function formatViewCount(viewCount: number | undefined): string {
+function formatViewCount(viewCount: number | undefined, lastSyncedAt?: string): string {
   return viewCount === undefined
     ? 'ไม่ทราบยอดวิว'
-    : `${viewCountFormatter.format(viewCount)} views`;
+    : Number.isFinite(Date.parse(lastSyncedAt ?? ''))
+      && Date.now() - Date.parse(lastSyncedAt ?? '') >= 60 * 60 * 1000
+      ? `ยอดวิวล่าสุด ${viewCountFormatter.format(viewCount)} views`
+      : `${viewCountFormatter.format(viewCount)} views`;
 }
 
 function getVideoThumbnailUrl(video: YouTubeVideo): string {
@@ -1006,7 +1009,7 @@ export function PlayerSearchOverlay({
                       <span className="block truncate text-sm font-bold sm:text-base">{video.title}</span>
                       <OfficialChannelBadge channelId={video.channel_id} />
                       <span className={`block truncate text-xs ${isSelected ? 'text-violet-100' : 'text-zinc-500'}`}>
-                        {video.artist ?? video.channel_name} · {formatViewCount(video.views_count)}
+                        {video.artist ?? video.channel_name} · {formatViewCount(video.views_count, video.last_synced_at)}
                       </span>
                     </span>
                     {isSelected && (

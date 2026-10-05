@@ -29,11 +29,6 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-export function hideStaleViews(video: YouTubeVideo): YouTubeVideo {
-  return Date.now() - Date.parse(video.last_synced_at ?? '') < HOUR
-    ? video : { ...video, views_count: undefined };
-}
-
 export function catalogPatterns(query: string): string[] {
   // Preserve Thai combining vowels/tone marks; bound work on arbitrary input.
   return normalizeYouTubeSearchText(query).split(' ').filter(Boolean).slice(0, 20)
@@ -156,7 +151,9 @@ export async function searchCatalog(query: string): Promise<YouTubeVideo[]> {
     queryCache.set(key, cached);
     void promise.catch(() => { if (queryCache.get(key)?.promise === promise) queryCache.delete(key); });
   }
-  return rankKaraokeVideos((await cached.promise).map(hideStaleViews), query).slice(0, 25);
+  // Keep the last known view count from Supabase visible. The UI labels it as
+  // the latest stored count when it is older than the live-refresh window.
+  return rankKaraokeVideos(await cached.promise, query).slice(0, 25);
 }
 
 // Reads only the server-private catalog. The payload stores the numeric
@@ -473,13 +470,14 @@ function normalizeYouTubeChannelHandle(value: string): string {
     }
     const match = url.pathname.match(/^\/@([^/]+)/);
     if (!match) throw new Error('ไม่พบ handle ใน URL ช่อง YouTube');
-    handle = match[1];
+    try { handle = decodeURIComponent(match[1]); }
+    catch { throw new Error('รูปแบบ YouTube handle ไม่ถูกต้อง'); }
   } catch (error) {
     if (error instanceof Error && error.message !== 'Invalid URL') throw error;
   }
 
   handle = handle.replace(/^@/, '').trim();
-  if (!/^[A-Za-z0-9._-]{1,100}$/.test(handle)) {
+  if (!/^[\p{L}\p{M}\p{N}._-]{1,100}$/u.test(handle)) {
     throw new Error('รูปแบบ YouTube handle ไม่ถูกต้อง');
   }
   return `@${handle}`;
@@ -624,7 +622,7 @@ export async function searchCatalogWithRefresh(query: string): Promise<{ videos:
     const stale = new Set(staleIds);
     return { videos: rankKaraokeVideos([...videos.filter((video) => !stale.has(video.youtube_video_id)), ...refreshed], query) };
   } catch {
-    return { videos, warning: 'แสดงเพลงในคลังได้ แต่ยังอัปเดตยอดวิวไม่สำเร็จ จึงซ่อนยอดวิวที่หมดอายุ' };
+    return { videos, warning: 'แสดงเพลงในคลังได้ แต่ยังอัปเดตยอดวิวสดไม่สำเร็จ จึงแสดงยอดวิวล่าสุดจากคลัง Supabase' };
   } finally { await unlock(name, token); }
 }
 

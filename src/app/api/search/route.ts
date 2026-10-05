@@ -4,6 +4,7 @@ import { getSearchBudget } from '@/lib/youtube-search-store';
 import { randomUUID } from 'node:crypto';
 import { saveCatalogVideos, searchCatalogWithRefresh } from '@/lib/youtube-catalog';
 import { isOfficialChannelTitleExcluded } from '@/lib/official-youtube-channels';
+import { writeSearchHistory } from '@/lib/youtube-search-store';
 
 export const runtime = 'nodejs';
 
@@ -36,6 +37,12 @@ export async function POST(request: NextRequest) {
     let warning: string | undefined;
     try { await saveCatalogVideos(results); }
     catch { warning = 'แสดงผลได้ แต่ยังบันทึกเพลงลงคลัง Supabase ไม่สำเร็จ'; }
+    try { await writeSearchHistory(query, results, direct ? 'video' : 'youtube'); }
+    catch {
+      warning = warning
+        ? `${warning} และยังบันทึกประวัติการค้นหาไม่สำเร็จ`
+        : 'แสดงผลได้ แต่ยังบันทึกประวัติการค้นหาไม่สำเร็จ';
+    }
     return reply({ success: true, count: results.length, data: results, source: direct ? 'video' : 'youtube', warning });
   } catch (error: unknown) {
     console.error('Error in /api/search:', error);

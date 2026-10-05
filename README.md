@@ -1,7 +1,7 @@
 # Karaoke Hub
 
 Next.js karaoke room application using Supabase for Auth, Realtime, room state,
-the song catalog, and persistent YouTube search quota/cache state.
+the song catalog, persistent YouTube search quota/cache state, and search history.
 
 ## Local development
 
@@ -12,7 +12,8 @@ npm run dev
 ```
 
 Apply every file in `supabase/migrations/` to the Supabase project before using
-the matching application revision.
+the matching application revision. This includes the permanent search-history
+migration `20261005090000_persistent_search_history.sql`.
 
 ## Vercel Hobby deployment
 

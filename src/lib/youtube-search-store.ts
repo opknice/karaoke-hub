@@ -21,6 +21,8 @@ interface SearchReservation {
   token?: string;
 }
 
+export type SearchHistorySource = 'youtube' | 'video';
+
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -71,6 +73,17 @@ export async function writeStoredSearch(query: string, results: YouTubeVideo[]):
     method: 'POST',
     body: JSON.stringify({ p_query: query, p_payload: results,
       p_ttl_seconds: results.length ? 7 * DAY_SECONDS : 15 * 60 }),
+  });
+}
+
+export async function writeSearchHistory(
+  query: string,
+  results: YouTubeVideo[],
+  source: SearchHistorySource,
+): Promise<void> {
+  await catalogRest('rpc/karaoke_search_history_store', {
+    method: 'POST',
+    body: JSON.stringify({ p_query: query, p_payload: results, p_source: source }),
   });
 }
 

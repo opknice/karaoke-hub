@@ -12,6 +12,19 @@ All search surfaces send `POST /api/search` only after Enter or a search-button 
 
 In Player, editing resets the highlighted search result. Enter searches; after results arrive, arrows select and Enter queues. An explicitly selected local suggestion can also be queued without a remote search. Holding Enter and IME confirmation do not submit repeatedly.
 
+## Permanent search history
+
+The expiring `karaoke_search_cache` remains an optimization. Every explicit
+YouTube search is additionally appended to `karaoke_search_history`, including
+queries served from the cache and searches with zero results. Each row keeps the
+submitted query, whether it was a YouTube search or direct video lookup, the
+result payload, result count, and timestamp. This history is global to the
+application rather than tied to a signed-in user.
+
+Apply `supabase/migrations/20261005090000_persistent_search_history.sql` before
+deploying the application code. The migration also copies existing cache rows
+into the permanent history table once.
+
 ## Persistent storage
 
 Search results, the daily request ledger, leases, client cooldowns and upstream
@@ -24,7 +37,12 @@ This shared state supports Vercel cold starts and concurrent Function instances;
 the application no longer requires a writable local filesystem or
 `YOUTUBE_SEARCH_DB_PATH`.
 
-Successful remote query results live for seven days; empty results for 15 minutes. Details/statistics refresh on demand after one hour through `videos.list`. Remote browser cache lasts at most one hour and is bounded to 100 queries; catalog submit cache lasts 15 seconds and uses separate keys. Expired SQLite search rows are removed on successful cache writes. Supabase metadata is refreshed or removed on its separate retention schedule.
+Successful remote query results live in the disposable cache for seven days;
+empty results for 15 minutes. Permanent history is not expired automatically.
+Details/statistics refresh on demand after one hour through `videos.list`. Remote
+browser cache lasts at most one hour and is bounded to 100 queries; catalog
+submit cache lasts 15 seconds and uses separate keys. Supabase metadata is
+refreshed or removed on its separate retention schedule.
 
 ## Budget and concurrency
 

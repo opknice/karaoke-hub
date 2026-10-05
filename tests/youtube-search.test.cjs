@@ -46,6 +46,7 @@ test('persistent cache, explicit search budget, concurrency and URL handling', a
   let searches = 0;
   let details = 0;
   const requestedIds = [];
+  const history = [];
   global.fetch = async (input, init = {}) => {
     const url = new URL(input);
     if (url.hostname === 'search-store-test.supabase.co') {
@@ -62,6 +63,10 @@ test('persistent cache, explicit search budget, concurrency and URL handling', a
       if (url.pathname.endsWith('/karaoke_search_store')) {
         cache.set(body.p_query, { payload: body.p_payload, updatedAt: Date.now(),
           expiresAt: Date.now() + body.p_ttl_seconds * 1000 });
+        return new Response(null, { status: 204 });
+      }
+      if (url.pathname.endsWith('/karaoke_search_history_store')) {
+        history.push(body);
         return new Response(null, { status: 204 });
       }
       if (url.pathname.endsWith('/karaoke_search_reserve')) {
@@ -113,6 +118,11 @@ test('persistent cache, explicit search budget, concurrency and URL handling', a
     assert.deepEqual(a, b);
     assert.equal(a[0].views_count, 12345);
     assert.equal((await store.getSearchBudget()).used, 1);
+    await store.writeSearchHistory(' ฟ้า   tattoo ', a, 'youtube');
+    assert.equal(history.length, 1);
+    assert.equal(history[0].p_query, ' ฟ้า   tattoo ');
+    assert.equal(history[0].p_source, 'youtube');
+    assert.deepEqual(history[0].p_payload, JSON.parse(JSON.stringify(a)));
 
     const restarted = loader();
     const restartedApi = restarted('src/lib/youtube.ts');
@@ -348,7 +358,7 @@ test('typing previews never fetch; concurrent clients share a request and preser
   }
 });
 
-test('catalog previews never call YouTube; explicit refresh uses only videos.list and hides stale views', async () => {
+test('catalog previews never call YouTube; explicit refresh uses only videos.list and preserves the latest stored views', async () => {
   const originalFetch = global.fetch;
   const originalUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const originalKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -387,7 +397,7 @@ test('catalog previews never call YouTube; explicit refresh uses only videos.lis
     const api = loader()('src/lib/youtube-catalog.ts');
     assert.deepEqual(api.catalogPatterns('ขอบฟ้า  bodyslam'), ['%ขอบฟ้า%', '%bodyslam%']);
     assert.deepEqual(api.catalogPatterns(' %_ '), []);
-    assert.equal((await api.searchCatalog('ขอบฟ้า'))[0].views_count, undefined);
+    assert.equal((await api.searchCatalog('ขอบฟ้า'))[0].views_count, 123);
     await api.searchCatalog('ขอบฟ้า');
     assert.equal(details, 0, 'typing reads Supabase only');
     assert.equal(reserves, 0);
@@ -399,7 +409,6 @@ test('catalog previews never call YouTube; explicit refresh uses only videos.lis
     assert.equal(searches, 0);
     assert.equal(savedRows[0].video_id, video.youtube_video_id);
     assert.equal(Date.parse(savedRows[0].expires_at) - Date.parse(savedRows[0].refreshed_at), 29 * 86_400_000);
-    assert.equal(api.hideStaleViews({ ...video, last_synced_at: undefined }).views_count, undefined);
   } finally {
     global.fetch = originalFetch;
     for (const [name, value] of Object.entries({ NEXT_PUBLIC_SUPABASE_URL: originalUrl,
