@@ -14,6 +14,7 @@
     "lint": "eslint",
     "extension:check": "node scripts/verify-extension.mjs",
     "catalog:sync": "node --env-file=.env.local scripts/sync-catalog.cjs",
+    "catalog:sync-channel": "node --env-file=.env.local scripts/sync-youtube-channel.cjs",
     "catalog:sync-rose-instrumental": "node --env-file=.env.local scripts/sync-rose-instrumental-catalog.cjs",
     "catalog:scan-rose-instrumental": "node --env-file=.env.local scripts/scan-rose-instrumental-uploads.cjs"
   },

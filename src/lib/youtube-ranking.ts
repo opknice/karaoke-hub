@@ -168,11 +168,11 @@ export function rankKaraokeVideos(
 
   return ranked
     .sort((left, right) => {
-      const relevanceDifference = right.relevance - left.relevance;
-      if (relevanceDifference !== 0) return relevanceDifference;
-
       const officialDifference = right.official - left.official;
       if (officialDifference !== 0) return officialDifference;
+
+      const relevanceDifference = right.relevance - left.relevance;
+      if (relevanceDifference !== 0) return relevanceDifference;
 
       const karaokeDifference = right.karaokeTier - left.karaokeTier;
       if (karaokeDifference !== 0) return karaokeDifference;

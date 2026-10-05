@@ -1,0 +1,342 @@
+.enterPrompt {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid rgba(216, 180, 254, 0.55);
+  background: linear-gradient(135deg, rgba(76, 29, 149, 0.82), rgba(30, 17, 67, 0.95) 48%, rgba(88, 28, 135, 0.86));
+  box-shadow:
+    0 0 0 1px rgba(196, 181, 253, 0.08),
+    0 18px 45px rgba(76, 29, 149, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  transition: transform 350ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 350ms ease;
+}
+
+.enterPrompt::before {
+  position: absolute;
+  inset: -100%;
+  z-index: -2;
+  content: '';
+  background: conic-gradient(
+    from 180deg,
+    transparent 0deg,
+    rgba(103, 232, 249, 0.05) 48deg,
+    rgba(244, 114, 182, 0.9) 105deg,
+    rgba(196, 181, 253, 0.1) 155deg,
+    transparent 215deg,
+    rgba(103, 232, 249, 0.7) 275deg,
+    transparent 325deg
+  );
+  animation: promptSpin 8s linear infinite;
+}
+
+.enterPrompt::after {
+  position: absolute;
+  inset: 1px;
+  z-index: -1;
+  border-radius: inherit;
+  content: '';
+  background:
+    radial-gradient(circle at 50% 0%, rgba(216, 180, 254, 0.24), transparent 42%),
+    linear-gradient(135deg, rgba(76, 29, 149, 0.97), rgba(30, 17, 67, 0.98) 56%, rgba(67, 20, 88, 0.98));
+  box-shadow: inset 0 0 35px rgba(167, 139, 250, 0.14);
+}
+
+.enterPrompt:hover {
+  transform: translateY(-2px) scale(1.005);
+  box-shadow:
+    0 0 0 1px rgba(216, 180, 254, 0.2),
+    0 22px 55px rgba(76, 29, 149, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.promptAura {
+  position: absolute;
+  top: -60%;
+  left: 50%;
+  width: 70%;
+  height: 190%;
+  pointer-events: none;
+  background: radial-gradient(ellipse, rgba(232, 121, 249, 0.2), transparent 68%);
+  filter: blur(18px);
+  transform: translateX(-50%);
+  animation: promptBreathe 3.8s ease-in-out infinite;
+}
+
+.promptSweep {
+  position: absolute;
+  top: -55%;
+  left: -24%;
+  width: 22%;
+  height: 210%;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.24), transparent);
+  filter: blur(8px);
+  opacity: 0.8;
+  transform: rotate(22deg) translateX(-260%);
+  animation: promptSweep 4.8s ease-in-out infinite;
+}
+
+.promptOrbit {
+  position: absolute;
+  pointer-events: none;
+  border: 1px solid rgba(216, 180, 254, 0.2);
+  border-radius: 999px;
+  transform: rotate(-18deg);
+}
+
+.promptOrbitOne {
+  right: -42px;
+  bottom: -64px;
+  width: 240px;
+  height: 112px;
+  animation: promptOrbitOne 7s ease-in-out infinite;
+}
+
+.promptOrbitTwo {
+  top: -70px;
+  left: -60px;
+  width: 190px;
+  height: 88px;
+  border-color: rgba(103, 232, 249, 0.16);
+  animation: promptOrbitTwo 9s ease-in-out infinite;
+}
+
+.promptContent {
+  position: relative;
+  z-index: 1;
+}
+
+.promptIcon {
+  display: grid;
+  width: 54px;
+  height: 54px;
+  margin: 0 auto 10px;
+  place-items: center;
+  border: 1px solid rgba(233, 213, 255, 0.45);
+  border-radius: 18px;
+  color: #f5d0fe;
+  background: linear-gradient(135deg, rgba(217, 70, 239, 0.65), rgba(124, 58, 237, 0.48));
+  box-shadow: 0 0 25px rgba(217, 70, 239, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  animation: promptIconFloat 2.8s ease-in-out infinite;
+}
+
+.promptMain {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #ffffff;
+  font-size: clamp(18px, 2.4vw, 25px);
+  font-weight: 900;
+  letter-spacing: -0.025em;
+  text-shadow: 0 2px 18px rgba(216, 180, 254, 0.35);
+}
+
+.promptKey {
+  display: inline-flex;
+  min-width: 78px;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 13px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-bottom-width: 4px;
+  border-radius: 10px;
+  color: #ffffff;
+  background: linear-gradient(180deg, rgba(196, 181, 253, 0.72), rgba(109, 40, 217, 0.82));
+  box-shadow: 0 0 0 4px rgba(196, 181, 253, 0.08), 0 7px 18px rgba(76, 29, 149, 0.4);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.92em;
+  line-height: 1;
+  animation: promptKeyPulse 1.9s ease-in-out infinite;
+}
+
+.promptArrow {
+  display: inline-block;
+  color: #67e8f9;
+  font-size: 1.15em;
+  animation: promptArrowNudge 1.4s ease-in-out infinite;
+}
+
+.promptSub {
+  margin-top: 11px;
+  color: rgba(233, 213, 255, 0.78);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.promptFooter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 5px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  color: rgba(224, 231, 255, 0.68);
+  background: rgba(15, 23, 42, 0.28);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.promptFooterKey {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 1px solid rgba(103, 232, 249, 0.5);
+  border-radius: 5px;
+  color: #a5f3fc;
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.modernEnterButton {
+  position: relative;
+  display: inline-flex;
+  min-width: 112px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  overflow: hidden;
+  padding: 0 15px;
+  border: 1px solid rgba(196, 181, 253, 0.65);
+  border-radius: 12px;
+  color: #ffffff;
+  background: linear-gradient(135deg, #7c3aed, #6d28d9 65%, #5b21b6);
+  box-shadow: 0 8px 18px rgba(76, 29, 149, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 180ms ease, background 180ms ease, box-shadow 180ms ease;
+  animation: modernEnterBreath 3.4s ease-in-out infinite;
+}
+
+.modernEnterButton::before {
+  position: absolute;
+  inset: 0;
+  content: '';
+  background: linear-gradient(105deg, transparent 25%, rgba(255, 255, 255, 0.2) 50%, transparent 75%);
+  transform: translateX(-125%);
+  transition: transform 500ms ease;
+}
+
+.modernEnterButton:hover {
+  background: linear-gradient(135deg, #8b5cf6, #7c3aed 65%, #6d28d9);
+  box-shadow: 0 11px 24px rgba(76, 29, 149, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  transform: translateY(-1px);
+}
+
+.modernEnterButton:hover::before {
+  transform: translateX(125%);
+}
+
+.modernEnterButton:active {
+  box-shadow: 0 4px 10px rgba(76, 29, 149, 0.3), inset 0 2px 4px rgba(46, 16, 101, 0.3);
+  transform: translateY(1px) scale(0.98);
+}
+
+.modernEnterButton:focus-visible {
+  outline: 2px solid #67e8f9;
+  outline-offset: 3px;
+}
+
+.modernEnterButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  animation: none;
+  transform: none;
+}
+
+.modernEnterButton > span {
+  position: relative;
+  z-index: 1;
+}
+
+.modernEnterKey {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 6px;
+  background: rgba(30, 17, 67, 0.28);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+}
+
+@keyframes modernEnterBreath {
+  0%, 100% { box-shadow: 0 8px 18px rgba(76, 29, 149, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.18); }
+  50% { box-shadow: 0 10px 23px rgba(76, 29, 149, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.22); }
+}
+
+@keyframes promptSpin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes promptBreathe {
+  0%, 100% { opacity: 0.45; transform: translateX(-50%) scale(0.9); }
+  50% { opacity: 0.9; transform: translateX(-50%) scale(1.08); }
+}
+
+@keyframes promptSweep {
+  0%, 22% { transform: rotate(22deg) translateX(-260%); }
+  72%, 100% { transform: rotate(22deg) translateX(720%); }
+}
+
+@keyframes promptOrbitOne {
+  0%, 100% { transform: rotate(-18deg) translate3d(0, 0, 0); }
+  50% { transform: rotate(-10deg) translate3d(-18px, -8px, 0); }
+}
+
+@keyframes promptOrbitTwo {
+  0%, 100% { transform: rotate(-18deg) translate3d(0, 0, 0); }
+  50% { transform: rotate(-25deg) translate3d(16px, 10px, 0); }
+}
+
+@keyframes promptIconFloat {
+  0%, 100% { transform: translateY(0) rotate(-4deg); }
+  50% { transform: translateY(-5px) rotate(4deg); }
+}
+
+@keyframes promptKeyPulse {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-3px) scale(1.045); }
+}
+
+@keyframes promptArrowNudge {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(4px, -4px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .enterPrompt,
+  .enterPrompt::before,
+  .promptAura,
+  .promptSweep,
+  .promptOrbit,
+  .promptIcon,
+  .promptKey,
+  .promptArrow,
+  .modernEnterButton {
+    animation: none;
+  }
+
+  .enterPrompt:hover,
+  .modernEnterButton:hover {
+    transform: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .promptMain {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .promptFooter {
+    font-size: 8px;
+    letter-spacing: 0.1em;
+  }
+}

@@ -429,6 +429,172 @@ export async function scanRoseInstrumentalUploads(
   }
 }
 
+export interface YouTubeChannelUploadsSyncResult {
+  channelId: string;
+  channelName: string;
+  pages: number;
+  videosScanned: number;
+  videosMatched: number;
+  videosImported: number;
+  videosSkipped: number;
+  completed: boolean;
+}
+
+export interface YouTubeChannelUploadsSyncOptions {
+  titleIncludes?: string;
+  force?: boolean;
+}
+
+function normalizeYouTubeChannelHandle(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error('ต้องระบุ YouTube channel URL หรือ handle');
+
+  let handle = trimmed;
+  try {
+    const url = new URL(trimmed);
+    if (!['youtube.com', 'www.youtube.com', 'm.youtube.com'].includes(url.hostname)) {
+      throw new Error('URL นี้ไม่ใช่ช่อง YouTube');
+    }
+    const match = url.pathname.match(/^\/@([^/]+)/);
+    if (!match) throw new Error('ไม่พบ handle ใน URL ช่อง YouTube');
+    handle = match[1];
+  } catch (error) {
+    if (error instanceof Error && error.message !== 'Invalid URL') throw error;
+  }
+
+  handle = handle.replace(/^@/, '').trim();
+  if (!/^[A-Za-z0-9._-]{1,100}$/.test(handle)) {
+    throw new Error('รูปแบบ YouTube handle ไม่ถูกต้อง');
+  }
+  return `@${handle}`;
+}
+
+function channelUploadsDetails(payload: Record<string, unknown>): {
+  channelId: string;
+  channelName: string;
+  playlistId: string;
+} {
+  const item = Array.isArray(payload.items) ? payload.items[0] : undefined;
+  if (!record(item)) throw new Error('ไม่พบช่อง YouTube จาก handle นี้');
+  const snippet = record(item.snippet) ? item.snippet : undefined;
+  const contentDetails = record(item.contentDetails) ? item.contentDetails : undefined;
+  const relatedPlaylists = contentDetails && record(contentDetails.relatedPlaylists)
+    ? contentDetails.relatedPlaylists : undefined;
+  const channelId = typeof item.id === 'string' ? item.id : '';
+  const channelName = snippet && typeof snippet.title === 'string' ? snippet.title : '';
+  const playlistId = relatedPlaylists && typeof relatedPlaylists.uploads === 'string'
+    ? relatedPlaylists.uploads : '';
+  if (!channelId || !channelName || !playlistId) {
+    throw new Error('ข้อมูล uploads playlist ของช่อง YouTube ไม่ครบถ้วน');
+  }
+  return { channelId, channelName, playlistId };
+}
+
+function uploadsVideoIds(payload: Record<string, unknown>): string[] {
+  if (!Array.isArray(payload.items)) return [];
+  return payload.items.flatMap((item): string[] => {
+    const details = record(item) && record(item.contentDetails) ? item.contentDetails : undefined;
+    return typeof details?.videoId === 'string' && /^[\w-]{11}$/.test(details.videoId)
+      ? [details.videoId] : [];
+  });
+}
+
+// Operator-only exhaustive import for a channel that is not part of the ranked
+// official-channel registry. The checkpoint makes a long import resumable.
+export async function syncYouTubeChannelUploads(
+  channelInput: string,
+  onProgress: (message: string) => void,
+  options: YouTubeChannelUploadsSyncOptions = {}
+): Promise<YouTubeChannelUploadsSyncResult> {
+  const handle = normalizeYouTubeChannelHandle(channelInput);
+  const titleIncludes = options.titleIncludes?.trim() || '';
+  const normalizedTitleIncludes = titleIncludes.toLocaleLowerCase('en-US');
+  const channelData = await youtubeCatalogRequest('channels', {
+    part: 'snippet,contentDetails', forHandle: handle,
+  });
+  const channel = channelUploadsDetails(channelData);
+  const name = `sync:${channel.channelId}`;
+  const token = randomUUID();
+  if (!await lock(name, token)) throw new Error('มีการนำเข้าช่อง YouTube นี้ทำงานอยู่แล้ว');
+
+  let pages = 0;
+  let videosScanned = 0;
+  let videosMatched = 0;
+  let videosImported = 0;
+  let videosSkipped = 0;
+  try {
+    const stateRows = await catalogRest(
+      `karaoke_catalog_sync?channel_id=eq.${channel.channelId}&select=*`
+    );
+    const state = Array.isArray(stateRows) && record(stateRows[0]) ? stateRows[0] : undefined;
+    const statePlaylistId = typeof state?.playlist_id === 'string' ? state.playlist_id : '';
+    const playlistId = statePlaylistId || channel.playlistId;
+    let pageToken = options.force || titleIncludes
+      ? '' : (typeof state?.page_token === 'string' ? state.page_token : '');
+    if (statePlaylistId && statePlaylistId !== channel.playlistId) {
+      pageToken = '';
+    }
+    if (!options.force && !titleIncludes && typeof state?.completed_at === 'string' && Date.now() - Date.parse(state.completed_at) < 7 * DAY) {
+      onProgress(`${channel.channelName}: ข้อมูลช่องถูกนำเข้าครบแล้วภายใน 7 วัน`);
+      return {
+        channelId: channel.channelId, channelName: channel.channelName,
+        pages: 0, videosScanned: 0, videosMatched: 0, videosImported: 0,
+        videosSkipped: 0, completed: true,
+      };
+    }
+
+    for (;;) {
+      if (!await lock(name, token)) throw new Error('สิทธิ์ล็อกการนำเข้าหมดอายุ กรุณาลองใหม่');
+      const data = await youtubeCatalogRequest('playlistItems', {
+        part: 'snippet,contentDetails', playlistId, maxResults: '50', ...(pageToken ? { pageToken } : {}),
+      });
+      const ids = uploadsVideoIds(data);
+      const candidateIds = titleIncludes
+        ? (data.items as unknown[]).flatMap((item): string[] => {
+          const details = record(item) && record(item.contentDetails) ? item.contentDetails : undefined;
+          const snippet = record(item) && record(item.snippet) ? item.snippet : undefined;
+          return typeof details?.videoId === 'string'
+            && /^[\w-]{11}$/.test(details.videoId)
+            && typeof snippet?.title === 'string'
+            && snippet.title.toLocaleLowerCase('en-US').includes(normalizedTitleIncludes)
+            ? [details.videoId] : [];
+        })
+        : ids;
+      let imported = 0;
+      if (candidateIds.length) {
+        const details = await youtubeCatalogRequest('videos', {
+          part: 'snippet,contentDetails,statistics,status', id: candidateIds.join(','),
+        });
+        // An uploads playlist can retain videos whose metadata channel_id is
+        // from a legacy/migrated channel. The playlist membership is the
+        // authoritative relationship for this operator import.
+        const videos = videosFromDetailsPayload(details).filter((video) => video.embeddable);
+        await saveCatalogVideos(videos);
+        imported = videos.length;
+      }
+      const nextPageToken = typeof data.nextPageToken === 'string' ? data.nextPageToken : '';
+      pages++;
+      videosScanned += ids.length;
+      videosMatched += candidateIds.length;
+      videosImported += imported;
+      videosSkipped += candidateIds.length - imported;
+      pageToken = nextPageToken;
+      await catalogRest('karaoke_catalog_sync?on_conflict=channel_id', {
+        method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify({ channel_id: channel.channelId, playlist_id: playlistId,
+          page_token: pageToken || null, completed_at: pageToken ? null : new Date().toISOString(),
+          updated_at: new Date().toISOString() }),
+      });
+      onProgress(`${channel.channelName}: หน้า ${pages}, สแกน ${ids.length}, ตรงเงื่อนไข ${candidateIds.length}, บันทึก ${imported}${pageToken ? '' : ' — ครบแล้ว'}`);
+      if (!pageToken) break;
+    }
+    return { channelId: channel.channelId, channelName: channel.channelName,
+      pages, videosScanned, videosMatched, videosImported, videosSkipped, completed: true };
+  } finally {
+    await unlock(name, token);
+  }
+}
+
 export async function searchCatalogWithRefresh(query: string): Promise<{ videos: YouTubeVideo[]; warning?: string }> {
   const videos = await searchCatalog(query);
   const staleIds = videos.filter((video) => !(Date.now() - Date.parse(video.last_synced_at ?? '') < HOUR))

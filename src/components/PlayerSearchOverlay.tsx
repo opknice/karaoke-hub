@@ -16,7 +16,6 @@ import type { YouTubeVideo } from '@/lib/types';
 import { searchPlayerKaraoke, getLocalSearchPreview, getPopularKaraokeVideos, isDirectVideoQuery, previewCatalog } from '@/lib/youtube-search-client';
 import { useLocalCatalog } from '@/lib/use-local-catalog';
 import { isYouTubeVideo } from '@/lib/youtube-video-validation';
-import { SearchBudgetNotice } from './SearchBudgetNotice';
 import { OfficialChannelBadge } from './OfficialChannelBadge';
 import { useCatalogPreview } from '@/lib/use-catalog-preview';
 import {
@@ -29,10 +28,10 @@ import {
   rankKaraokeVideos,
   type YouTubeSearchMode,
 } from '@/lib/youtube-ranking';
-import { PlayerQRGuideCard } from './PlayerQRGuideCard';
 import { LyricsGoogleSearchModal } from './LyricsGoogleSearchModal';
 import { PlayerIdleWelcome, PlayerIdleKeyboardHeading, PlayerIdleKeyboardHints, PlayerIdleRoom } from './PlayerIdleGuide';
 import idleStyles from './PlayerIdleGuide.module.css';
+import enterPromptStyles from './PlayerSearchOverlay.module.css';
 
 type SearchStatus = 'idle' | 'loading' | 'success' | 'error';
 
@@ -43,7 +42,7 @@ interface PlayerSearchOverlayProps {
   onToggleAutoLevel: () => void;
 }
 
-const MAX_VISIBLE_RESULTS = 7;
+const MAX_VISIBLE_RESULTS = 25;
 const MIN_SEARCH_LENGTH = 2;
 const SUCCESS_MESSAGE_MS = 1800;
 const YOUTUBE_SEARCH_ANNOUNCER_MIN_MS = 900;
@@ -120,6 +119,7 @@ export function PlayerSearchOverlay({
   const [volumeFeedback, setVolumeFeedback] = useState<number | null>(null);
   const [searchSource, setSearchSource] = useState<'catalog' | 'youtube'>('catalog');
   const [localResultsActive, setLocalResultsActive] = useState(false);
+  const [catalogSearchSettled, setCatalogSearchSettled] = useState(false);
   const [showLyricsInput, setShowLyricsInput] = useState(false);
   const [lyricsInput, setLyricsInput] = useState('');
   const [submittedLyricsQuery, setSubmittedLyricsQuery] = useState('');
@@ -130,6 +130,7 @@ export function PlayerSearchOverlay({
     setSelectedIndex(-1);
     setStatus('idle');
     setLocalResultsActive(true);
+    setCatalogSearchSettled(true);
     setSearchSource('catalog');
   }, () => {});
   const searchLocalCatalog = localCatalog.search;
@@ -139,6 +140,7 @@ export function PlayerSearchOverlay({
     if (catalogModeRef.current !== 'supabase') return;
     setRawResults(videos);
     setSelectedIndex(-1);
+    setCatalogSearchSettled(true);
   }, []);
   const catalogError = useCatalogPreview(query, localCatalog.initialized && status === 'idle' && localCatalog.mode === 'supabase', receivePreview);
 
@@ -181,6 +183,7 @@ export function PlayerSearchOverlay({
     setStatus('idle');
     setErrorMessage('');
     setLocalResultsActive(false);
+    setCatalogSearchSettled(false);
     lyricsUiActiveRef.current = false;
     setShowLyricsInput(false);
     setIsLyricsModalOpen(false);
@@ -221,6 +224,7 @@ export function PlayerSearchOverlay({
     setSelectedIndex(-1);
     setErrorMessage('');
     setLocalResultsActive(false);
+    setCatalogSearchSettled(false);
     if (catalogModeRef.current === 'local') {
       setRawResults([]);
       if (value.trim().length >= MIN_SEARCH_LENGTH && !isDirectVideoQuery(value)) {
@@ -267,6 +271,7 @@ export function PlayerSearchOverlay({
       setStatus('idle');
       setSelectedIndex(-1);
       setLocalResultsActive(false);
+      setCatalogSearchSettled(false);
       setSearchSource('catalog');
       const currentQuery = queryRef.current.trim();
       if (currentQuery.length < MIN_SEARCH_LENGTH) {
@@ -323,6 +328,13 @@ export function PlayerSearchOverlay({
       .getElementById(`player-queue-item-${selectedQueueItem.id}`)
       ?.scrollIntoView({ block: 'nearest' });
   }, [isQueueBrowserOpen, selectedQueueItem]);
+
+  useEffect(() => {
+    if (!isOpen || !selectedSearchResult) return;
+    document
+      .getElementById(`player-result-${selectedSearchResult.id}`)
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [isOpen, selectedSearchResult]);
 
   const addSelectedVideo = useCallback(
     async (video: YouTubeVideo): Promise<void> => {
@@ -713,7 +725,7 @@ export function PlayerSearchOverlay({
                 aria-controls={isQueueBrowserActive ? 'player-queue-results' : 'player-search-results'}
                 aria-activedescendant={activeDescendantId}
               />
-              <button hidden={isIdleGuideVisible} type="button" aria-label="สลับการเรียงตามชื่อเพลงหรือศิลปิน" onClick={() => {
+              <button hidden type="button" aria-label="สลับการเรียงตามชื่อเพลงหรือศิลปิน" onClick={() => {
                 const nextMode = mode === 'song' ? 'artist' : 'song';
                 searchModeRef.current = nextMode;
                 setMode(nextMode);
@@ -727,7 +739,19 @@ export function PlayerSearchOverlay({
               }} className="shrink-0 rounded-lg border border-violet-400/30 bg-violet-500/15 px-2.5 py-1 text-xs font-bold text-violet-200">
                 {mode === 'song' ? 'ชื่อเพลง' : 'ศิลปิน'}
               </button>
-              <button type="button" disabled={status === 'loading'} onClick={() => void submitSearch()} className="rounded-lg bg-violet-600 px-3 py-2 text-sm text-white disabled:opacity-50">{localCatalog.mode === 'local' ? 'ค้นในเครื่อง' : 'ค้นในคลัง'}</button>
+              {localCatalog.mode === 'local' ? (
+                <button
+                  type="button"
+                  onClick={() => void submitSearch()}
+                  disabled={status === 'loading'}
+                  className={enterPromptStyles.modernEnterButton}
+                >
+                  <span>Enter !</span>
+                  <span className={enterPromptStyles.modernEnterKey} aria-hidden="true">↵</span>
+                </button>
+              ) : (
+                <button type="button" disabled={status === 'loading'} onClick={() => void submitSearch()} className="rounded-lg bg-violet-600 px-3 py-2 text-sm text-white disabled:opacity-50">ค้นในคลัง</button>
+              )}
             </div>
             {isIdleGuideVisible && <PlayerIdleKeyboardHints onPopular={() => void openPopular()} onLyrics={toggleLyricsInput} />}
             {showPopular && <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-violet-200"><span>เพลงยอดนิยมในคลัง · ↑↓ เลือกเพลง แล้วกด Enter</span><button type="button" onClick={closeSearch} className="rounded-lg border border-white/20 px-3 py-2 text-white">กลับหน้ารอ (Esc)</button>{status === 'error' && <button type="button" onClick={() => void openPopular()} className="rounded-lg bg-violet-700 px-3 py-2 text-white">ลองโหลดใหม่</button>}</div>}
@@ -788,7 +812,7 @@ export function PlayerSearchOverlay({
                 <span>Esc ปิดค้นหา • Home เริ่มเพลงใหม่ • End ข้ามเพลงปัจจุบัน</span>
                 <div className="flex w-full flex-wrap items-center gap-2 pt-1 text-sm font-semibold text-zinc-100">
                   <span>ยังไม่เจอเพลงที่ต้องการ?</span>
-                  <button type="button" disabled={status === 'loading' || trimmedQuery.length < 2 || isDirectVideoQuery(query)}
+                  <button hidden type="button" disabled={status === 'loading' || trimmedQuery.length < 2 || isDirectVideoQuery(query)}
                     onClick={() => void submitSearch('youtube')}
                     className="rounded-lg border border-violet-300/60 bg-violet-500/20 px-3 py-1.5 font-semibold text-violet-50 shadow-sm hover:bg-violet-500/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300 disabled:opacity-40">
                     ค้นเพิ่มบน YouTube
@@ -801,7 +825,7 @@ export function PlayerSearchOverlay({
                     onClick={toggleLyricsInput}
                     className="rounded-lg border border-cyan-300/50 bg-cyan-500/15 px-3 py-1.5 font-semibold text-cyan-50 shadow-sm hover:bg-cyan-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
                   >
-                    รู้เนื้อ ไม่รู้ชื่อเพลง
+                    รู้เนื้อ ไม่รู้เพลง คลิ๊กเลย
                   </button>
                 </div>
                 {showLyricsInput && (
@@ -846,23 +870,46 @@ export function PlayerSearchOverlay({
                     </span>
                   </form>
                 )}
-                <span>{searchSource === 'youtube' ? 'ผลจาก YouTube / แคชคำค้น' : localCatalog.mode === 'local' && localResultsActive ? 'คลังในเครื่อง • ไม่ใช้เครือข่ายขณะพิมพ์' : 'คลังเพลง Supabase • ไม่ใช้ Search Queries'}</span>
               </div>
             )}
           </div>
-          {isOpen && <SearchBudgetNotice />}
           {localCatalog.mode === 'supabase' && catalogError && <p role="status" className="mt-2 text-xs text-amber-200">{catalogError}</p>}
 
           {isOpen && (
             <div className="mt-3 grid grid-cols-1 items-start gap-4 lg:grid-cols-12">
               <div
                 id="player-search-results"
-                className="overflow-hidden rounded-2xl border border-white/10 bg-zinc-950/95 shadow-2xl backdrop-blur-xl lg:col-span-8"
+                className="max-h-[calc(100dvh-18rem)] overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-zinc-950/95 shadow-2xl backdrop-blur-xl lg:col-span-8"
                 role="listbox"
                 aria-label="ผลการค้นหาเพลง"
               >
-              {status === 'idle' && trimmedQuery.length >= MIN_SEARCH_LENGTH && (
-                <p className="px-5 py-3 text-center text-sm text-zinc-400">{localCatalog.mode === 'local' ? 'ค้นในเครื่องขณะพิมพ์' : 'ค้นในคลังขณะพิมพ์'} • ↑↓ หรือคลิกเลือกเพลง • กด Enter เพื่อค้นต่อบน YouTube เมื่อไม่พบในคลัง</p>
+              {status === 'idle' && catalogSearchSettled && trimmedQuery.length >= MIN_SEARCH_LENGTH && !isDirectVideoQuery(trimmedQuery) && (
+                results.length === 0 ? (
+                  <div className={`mx-3 my-3 rounded-2xl px-5 py-5 text-center sm:mx-5 sm:my-4 sm:py-6 ${enterPromptStyles.enterPrompt}`} role="status" aria-live="polite">
+                    <span className={enterPromptStyles.promptAura} aria-hidden="true" />
+                    <span className={enterPromptStyles.promptSweep} aria-hidden="true" />
+                    <span className={`${enterPromptStyles.promptOrbit} ${enterPromptStyles.promptOrbitOne}`} aria-hidden="true" />
+                    <span className={`${enterPromptStyles.promptOrbit} ${enterPromptStyles.promptOrbitTwo}`} aria-hidden="true" />
+                    <div className={enterPromptStyles.promptContent}>
+                      <div className={enterPromptStyles.promptIcon} aria-hidden="true">
+                        <Music2 className="h-7 w-7" />
+                      </div>
+                      <p className={enterPromptStyles.promptMain}>
+                        <span>กด</span>
+                        <kbd className={enterPromptStyles.promptKey}>Enter</kbd>
+                        <span>เลยเพื่อค้นหาเพลง</span>
+                        <span className={enterPromptStyles.promptArrow} aria-hidden="true">↗</span>
+                      </p>
+                      <p className={enterPromptStyles.promptSub}>ระบบจะค้นหาเพลงเพิ่มเติมจาก YouTube</p>
+                      <div className={enterPromptStyles.promptFooter} aria-hidden="true">
+                        <span>PRESS ENTER TO DISCOVER</span>
+                        <span className={enterPromptStyles.promptFooterKey}>↵</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="px-5 py-3 text-center text-sm text-zinc-400">{localCatalog.mode === 'local' ? 'ค้นในเครื่องขณะพิมพ์' : 'ค้นในคลังขณะพิมพ์'} • ↑↓ หรือคลิกเลือกเพลง • กด Enter เพื่อเพิ่มเพลงที่เลือก</p>
+                )
               )}
               {!showPopular && trimmedQuery.length < MIN_SEARCH_LENGTH && (
                 <div className="px-5 py-6 text-center text-sm text-zinc-400" role="status">
@@ -970,19 +1017,9 @@ export function PlayerSearchOverlay({
               })}
             </div>
 
-            {activeRoom && (
-              <div className="hidden shrink-0 lg:block lg:col-span-4">
-                <PlayerQRGuideCard roomCode={activeRoom.room_code} />
-              </div>
-            )}
           </div>
           )}
 
-          {isOpen && activeRoom && (
-            <div className="mt-3 block lg:hidden">
-              <PlayerQRGuideCard roomCode={activeRoom.room_code} variant="compact" />
-            </div>
-          )}
         </div>
         {isIdleGuideVisible && <PlayerIdleRoom roomCode={activeRoom?.room_code} />}
         </div>

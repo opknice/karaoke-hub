@@ -80,6 +80,49 @@ export const OFFICIAL_YOUTUBE_CHANNELS: readonly OfficialYouTubeChannel[] = [
     reviewedAt: '2026-10-01',
     catalogTitleIncludesAny: ['kamioke', 'karaoke'],
   },
+  // Channels explicitly approved for priority by the operator.
+  {
+    channelId: 'UCwgNL4LqRPeDlrNVNClIfmA',
+    name: 'SMALLROOM Karaoke',
+    url: 'https://www.youtube.com/@smallroommusic.karaoke',
+    evidenceUrl: 'https://www.youtube.com/@smallroommusic.karaoke',
+    reviewedAt: '2026-10-05',
+  },
+  {
+    channelId: 'UC7r-1DPtMQ7L4-4AgWThwgg',
+    name: 'MIDI KARAOKE',
+    url: 'https://www.youtube.com/@midikaraoke7247',
+    evidenceUrl: 'https://www.youtube.com/@midikaraoke7247',
+    reviewedAt: '2026-10-05',
+  },
+  {
+    channelId: 'UCbd_wmcnBJ8-_uuY5nIbmig',
+    name: 'คาราโอเกะกีต้าร์สด By...Mr.Kittisat',
+    url: 'https://www.youtube.com/@extremekaraokexmk2023',
+    evidenceUrl: 'https://www.youtube.com/@extremekaraokexmk2023',
+    reviewedAt: '2026-10-05',
+  },
+  {
+    channelId: 'UCkKeG3Vz6R0JZowsYE2hMHQ',
+    name: 'Whattheduck',
+    url: 'https://www.youtube.com/@whattheduckmusic',
+    evidenceUrl: 'https://www.youtube.com/@whattheduckmusic/search?query=Official%20Karaoke',
+    reviewedAt: '2026-10-05',
+  },
+  {
+    channelId: 'UCV7MFUnxDmla1xzcEcBSgqQ',
+    name: 'ปราโมทย์ วิเลปะนะ Official Channel',
+    url: 'https://www.youtube.com/@officialchannel8469',
+    evidenceUrl: 'https://www.youtube.com/@officialchannel8469',
+    reviewedAt: '2026-10-05',
+  },
+  {
+    channelId: 'UCOnsZ5fjGCcVYsV5P-c_QQQ',
+    name: 'PramoteVilepanaVEVO',
+    url: 'https://www.youtube.com/@pramotevilepanavevo',
+    evidenceUrl: 'https://www.youtube.com/@pramotevilepanavevo',
+    reviewedAt: '2026-10-05',
+  },
 ];
 
 const channelsById = new Map(OFFICIAL_YOUTUBE_CHANNELS.map((channel) => [channel.channelId, channel]));
