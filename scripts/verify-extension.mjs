@@ -17,6 +17,8 @@ const requiredFiles = [
   'content-script.js',
   'offscreen.html',
   'offscreen.js',
+  'pitch-correction-processor.js',
+  'pitch-corrector.mjs',
   'center-attenuation-processor.js',
   'loudness-normalizer-processor.js',
   'loudness-normalizer.mjs',

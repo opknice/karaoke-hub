@@ -8,7 +8,7 @@ import {
   useState,
 } from 'react';
 import Image from 'next/image';
-import { Check, ListMusic, Loader2, Music2, Search, Volume2 } from 'lucide-react';
+import { Check, Gauge, ListMusic, Loader2, Music2, Search, Volume2 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useKaraoke } from '@/context/KaraokeContext';
 import { formatDuration } from '@/lib/queue-algorithm';
@@ -20,6 +20,7 @@ import { OfficialChannelBadge } from './OfficialChannelBadge';
 import { useCatalogPreview } from '@/lib/use-catalog-preview';
 import {
   adjustPlayerVolume,
+  getPlayerTempoShortcut,
   getPlayerVolumeShortcut,
   isPlayerAutoLevelShortcut,
   isPlayerVocalCutShortcut,
@@ -32,6 +33,7 @@ import { LyricsGoogleSearchModal } from './LyricsGoogleSearchModal';
 import { PlayerIdleWelcome, PlayerIdleKeyboardHeading, PlayerIdleKeyboardHints, PlayerIdleRoom } from './PlayerIdleGuide';
 import idleStyles from './PlayerIdleGuide.module.css';
 import enterPromptStyles from './PlayerSearchOverlay.module.css';
+import type { TempoAdjustmentResult, TempoDirection } from './YouTubePlayer';
 
 type SearchStatus = 'idle' | 'loading' | 'success' | 'error';
 
@@ -40,6 +42,8 @@ interface PlayerSearchOverlayProps {
   onRestartCurrentSong: () => void;
   onToggleVocalCut: () => void;
   onToggleAutoLevel: () => void;
+  onAdjustTempo: (direction: TempoDirection) => TempoAdjustmentResult;
+  onTempoShortcut: () => void;
 }
 
 const MAX_VISIBLE_RESULTS = 25;
@@ -84,6 +88,8 @@ export function PlayerSearchOverlay({
   onRestartCurrentSong,
   onToggleVocalCut,
   onToggleAutoLevel,
+  onAdjustTempo,
+  onTempoShortcut,
 }: PlayerSearchOverlayProps) {
   const {
     activeRoom,
@@ -104,6 +110,8 @@ export function PlayerSearchOverlay({
   const youtubeSearchStartedAtRef = useRef<number | null>(null);
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const volumeFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tempoFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const addingVideoRef = useRef(false);
   const queryRef = useRef('');
   const catalogModeRef = useRef<'supabase' | 'local'>('supabase');
   const searchModeRef = useRef<YouTubeSearchMode>('song');
@@ -119,7 +127,9 @@ export function PlayerSearchOverlay({
   const [status, setStatus] = useState<SearchStatus>('idle');
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [addingVideoTitle, setAddingVideoTitle] = useState('');
   const [volumeFeedback, setVolumeFeedback] = useState<number | null>(null);
+  const [tempoFeedback, setTempoFeedback] = useState<string | null>(null);
   const [searchSource, setSearchSource] = useState<'catalog' | 'youtube'>('catalog');
   const [localResultsActive, setLocalResultsActive] = useState(false);
   const [catalogSearchSettled, setCatalogSearchSettled] = useState(false);
@@ -341,6 +351,9 @@ export function PlayerSearchOverlay({
 
   const addSelectedVideo = useCallback(
     async (video: YouTubeVideo): Promise<void> => {
+      if (addingVideoRef.current) return;
+      addingVideoRef.current = true;
+      setAddingVideoTitle(video.title);
       try {
         let verifiedVideo = video;
         if (localResultsActive && localCatalog.mode === 'local') {
@@ -351,8 +364,12 @@ export function PlayerSearchOverlay({
           }
           verifiedVideo = payload.video;
         }
-        await addToQueue(verifiedVideo, nickname, [nickname]);
-        setSuccessMessage(`เพิ่ม “${video.title}” เข้าคิวแล้ว`);
+        const queuedItem = await addToQueue(verifiedVideo, nickname, [nickname]);
+        setSuccessMessage(
+          queuedItem.status === 'playing'
+            ? `กำลังเริ่ม “${video.title}”`
+            : `เพิ่ม “${video.title}” เข้าคิวแล้ว`
+        );
         closeSearch();
 
         if (successTimerRef.current) clearTimeout(successTimerRef.current);
@@ -363,6 +380,9 @@ export function PlayerSearchOverlay({
       } catch (error) {
         setStatus('error');
         setErrorMessage(error instanceof Error ? error.message : 'ไม่สามารถเพิ่มเพลงได้');
+      } finally {
+        addingVideoRef.current = false;
+        setAddingVideoTitle('');
       }
     },
     [addToQueue, closeSearch, nickname, localResultsActive, localCatalog.mode]
@@ -500,6 +520,7 @@ export function PlayerSearchOverlay({
       requestRef.current?.abort();
       if (successTimerRef.current) clearTimeout(successTimerRef.current);
       if (volumeFeedbackTimerRef.current) clearTimeout(volumeFeedbackTimerRef.current);
+      if (tempoFeedbackTimerRef.current) clearTimeout(tempoFeedbackTimerRef.current);
     };
   }, []);
 
@@ -543,6 +564,21 @@ export function PlayerSearchOverlay({
       event.preventDefault();
       event.stopPropagation();
       onToggleVocalCut();
+      return;
+    }
+
+    const tempoShortcut = getPlayerTempoShortcut(event);
+    if (tempoShortcut && !isEditableTarget && nowPlaying && !event.repeat) {
+      event.preventDefault();
+      event.stopPropagation();
+      onTempoShortcut();
+      const tempoResult = onAdjustTempo(tempoShortcut);
+      setTempoFeedback(tempoResult.message);
+      if (tempoFeedbackTimerRef.current) clearTimeout(tempoFeedbackTimerRef.current);
+      tempoFeedbackTimerRef.current = setTimeout(() => {
+        setTempoFeedback(null);
+        tempoFeedbackTimerRef.current = null;
+      }, 1200);
       return;
     }
 
@@ -651,6 +687,7 @@ export function PlayerSearchOverlay({
       }
 
       if (status === 'loading') return;
+      if (addingVideoRef.current) return;
       if (status !== 'success' && !results[selectedIndex]) {
         void submitSearch();
         return;
@@ -672,6 +709,8 @@ export function PlayerSearchOverlay({
     moveQueueSelection,
     nowPlaying,
     onRestartCurrentSong,
+    onAdjustTempo,
+    onTempoShortcut,
     onToggleAutoLevel,
     onToggleVocalCut,
     query.length,
@@ -962,6 +1001,7 @@ export function PlayerSearchOverlay({
                     role="option"
                     aria-selected={isSelected}
                     onClick={() => void addSelectedVideo(video)}
+                    disabled={Boolean(addingVideoTitle)}
                     className={`flex w-full items-center gap-4 border-b border-white/5 px-4 py-3 text-left transition last:border-b-0 sm:px-5 ${
                       isSelected
                         ? 'bg-violet-600 text-white'
@@ -1173,6 +1213,17 @@ export function PlayerSearchOverlay({
         </div>
       )}
 
+      {addingVideoTitle && (
+        <div
+          className="pointer-events-none fixed bottom-8 left-1/2 z-[60] flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-full border border-violet-400/30 bg-violet-950/95 px-4 py-2.5 text-sm font-semibold text-violet-100 shadow-2xl backdrop-blur-xl"
+          role="status"
+          aria-live="polite"
+        >
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
+          <span className="truncate">กำลังเริ่ม “{addingVideoTitle}”…</span>
+        </div>
+      )}
+
       {volumeFeedback !== null && (
         <div
           className="pointer-events-none fixed right-5 top-5 z-[60] flex items-center gap-2 rounded-xl border border-white/15 bg-zinc-950/90 px-3 py-2 text-sm font-semibold text-white shadow-xl backdrop-blur-xl sm:right-8 sm:top-8"
@@ -1182,6 +1233,17 @@ export function PlayerSearchOverlay({
         >
           <Volume2 className="h-4 w-4 text-violet-300" aria-hidden="true" />
           <span>{volumeFeedback}%</span>
+        </div>
+      )}
+
+      {tempoFeedback !== null && (
+        <div
+          className="pointer-events-none fixed right-5 top-16 z-[60] flex items-center gap-2 rounded-xl border border-cyan-400/25 bg-zinc-950/90 px-3 py-2 text-sm font-semibold text-white shadow-xl backdrop-blur-xl sm:right-8 sm:top-20"
+          role="status"
+          aria-live="polite"
+        >
+          <Gauge className="h-4 w-4 text-cyan-300" aria-hidden="true" />
+          <span>{tempoFeedback}</span>
         </div>
       )}
 

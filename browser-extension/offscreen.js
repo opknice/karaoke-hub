@@ -6,6 +6,7 @@ const CROSSFADE_SECONDS = 0.06;
 let audioContext = null;
 let mediaStream = null;
 let sourceNode = null;
+let pitchNode = null;
 let workletNode = null;
 let normalizerNode = null;
 let limiterNode = null;
@@ -14,6 +15,7 @@ let vocalCutEnabled = false;
 let normalizeEnabled = false;
 let currentPlayerVolume = 85;
 let currentPlayerMuted = false;
+let currentPlaybackRate = 1;
 let lastMonoLike = false;
 let lastInputChannelCount = null;
 let lastAnalysisSignature = null;
@@ -32,6 +34,7 @@ async function stopCapture(notify = true) {
   const stoppedTabId = activeTabId;
   activeTabId = null;
   vocalCutEnabled = false;
+  currentPlaybackRate = 1;
   lastMonoLike = false;
   lastInputChannelCount = null;
   lastAnalysisSignature = null;
@@ -54,6 +57,11 @@ async function stopCapture(notify = true) {
   if (sourceNode) {
     sourceNode.disconnect();
     sourceNode = null;
+  }
+  if (pitchNode) {
+    pitchNode.port.postMessage({ type: 'RESET' });
+    pitchNode.disconnect();
+    pitchNode = null;
   }
   if (mediaStream) {
     for (const track of mediaStream.getTracks()) {
@@ -124,6 +132,16 @@ function setPlayerVolume(volume, muted) {
   return Boolean(normalizerNode);
 }
 
+function setPlaybackRate(playbackRate) {
+  if (!Number.isFinite(playbackRate)) return false;
+  currentPlaybackRate = Math.min(2, Math.max(0.25, Number(playbackRate)));
+  pitchNode?.port.postMessage({
+    type: 'SET_PLAYBACK_RATE',
+    playbackRate: currentPlaybackRate,
+  });
+  return Boolean(pitchNode);
+}
+
 function resetLoudness(preserveGain = false) {
   if (!normalizerNode) return false;
   normalizerNode.port.postMessage({ type: 'RESET', preserveGain });
@@ -163,6 +181,9 @@ async function startCapture(streamId, tabId) {
     audioContext = new AudioContext({ latencyHint: 'interactive' });
     await Promise.all([
       audioContext.audioWorklet.addModule(
+        chrome.runtime.getURL('pitch-correction-processor.js'),
+      ),
+      audioContext.audioWorklet.addModule(
         chrome.runtime.getURL('center-attenuation-processor.js'),
       ),
       audioContext.audioWorklet.addModule(
@@ -170,6 +191,12 @@ async function startCapture(streamId, tabId) {
       ),
     ]);
     sourceNode = audioContext.createMediaStreamSource(mediaStream);
+    pitchNode = new AudioWorkletNode(audioContext, 'pitch-correction-processor', {
+      channelCount: 2,
+      channelCountMode: 'max',
+      channelInterpretation: 'speakers',
+      outputChannelCount: [2],
+    });
     workletNode = new AudioWorkletNode(audioContext, 'center-attenuation-processor', {
       channelCount: 2,
       channelCountMode: 'max',
@@ -243,7 +270,8 @@ async function startCapture(streamId, tabId) {
       });
     };
 
-    sourceNode.connect(workletNode).connect(normalizerNode).connect(limiterNode).connect(audioContext.destination);
+    sourceNode.connect(pitchNode).connect(workletNode).connect(normalizerNode).connect(limiterNode).connect(audioContext.destination);
+    setPlaybackRate(currentPlaybackRate);
     setPlayerVolume(currentPlayerVolume, currentPlayerMuted);
     normalizerNode.port.postMessage({ type: 'SET_ENABLED', enabled: normalizeEnabled });
     if (audioTrack) {
@@ -258,6 +286,7 @@ async function startCapture(streamId, tabId) {
       monoLike: false,
       normalizeEnabled,
       normalizeStatus: normalizeEnabled ? 'warming' : 'off',
+      playbackRate: currentPlaybackRate,
       playerVolume: currentPlayerVolume,
     });
     return { ok: true };
@@ -304,6 +333,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           volume: currentPlayerVolume,
           muted: currentPlayerMuted,
         };
+      case 'SET_PLAYBACK_RATE':
+        return {
+          ok: setPlaybackRate(message.playbackRate),
+          playbackRate: currentPlaybackRate,
+        };
       case 'RESET_LOUDNESS':
         return { ok: resetLoudness(message.preserveGain === true) };
       case 'GET_AUDIO_STATUS':
@@ -318,6 +352,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             normalizeEnabled,
             normalizeStatus: normalizeEnabled ? 'warming' : 'off',
             playerVolume: currentPlayerVolume,
+            playbackRate: currentPlaybackRate,
             monoLike: lastMonoLike,
             inputChannelCount: lastInputChannelCount,
             preset: currentPreset,

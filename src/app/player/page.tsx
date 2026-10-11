@@ -5,7 +5,12 @@ import { Maximize2, QrCode, X } from 'lucide-react';
 import { PlayerSearchOverlay } from '@/components/PlayerSearchOverlay';
 import { PlayerQRGuideCard } from '@/components/PlayerQRGuideCard';
 import { PlayerVocalCutStatus } from '@/components/PlayerVocalCutStatus';
-import { YouTubePlayer, type YouTubePlayerHandle } from '@/components/YouTubePlayer';
+import {
+  YouTubePlayer,
+  type TempoAdjustmentResult,
+  type TempoDirection,
+  type YouTubePlayerHandle,
+} from '@/components/YouTubePlayer';
 import { useKaraoke } from '@/context/KaraokeContext';
 import { useVocalCutExtension } from '@/hooks/useVocalCutExtension';
 
@@ -17,6 +22,9 @@ export default function PlayerPage() {
   const [isPageFullscreen, setIsPageFullscreen] = useState(false);
   const [fullscreenError, setFullscreenError] = useState('');
   const [normalizeFeedbackPhase, setNormalizeFeedbackPhase] = useState<'hidden' | 'visible' | 'fading'>('hidden');
+  const [showTempoControl, setShowTempoControl] = useState(false);
+  const [tempoControlSongId, setTempoControlSongId] = useState<string | null>(null);
+  const [tempoRate, setTempoRate] = useState(1);
   const [roomSetupError, setRoomSetupError] = useState('');
   const [isRetryingRoom, setIsRetryingRoom] = useState(false);
   const playerRef = useRef<YouTubePlayerHandle>(null);
@@ -24,16 +32,45 @@ export default function PlayerPage() {
   const ownsFullscreenRef = useRef(false);
   const normalizeFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const normalizeHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tempoControlHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const vocalCut = useVocalCutExtension(
     nowPlaying?.video.youtube_video_id ?? null,
     volume,
     isMuted
   );
   const toggleNormalize = vocalCut.toggleNormalize;
+  const setExtensionPlaybackRate = vocalCut.setPlaybackRate;
+  const tempoExtensionReady = vocalCut.state.supportsPitchPreservedTempo
+    && ['capturing_original', 'capturing_vocal_cut', 'unsupported_mono'].includes(vocalCut.state.captureStatus);
 
   const restartCurrentSong = useCallback(() => {
     playerRef.current?.restartCurrentSong();
   }, []);
+
+  const adjustTempo = useCallback((direction: TempoDirection): TempoAdjustmentResult => (
+    playerRef.current?.adjustTempo(direction) ?? {
+      status: 'unavailable',
+      playbackRate: 1,
+      message: 'ยังไม่มีเพลงที่พร้อมปรับ Tempo',
+    }
+  ), []);
+
+  const handleTempoRateChange = useCallback((playbackRate: number) => {
+    setTempoRate(playbackRate);
+    setExtensionPlaybackRate(playbackRate);
+  }, [setExtensionPlaybackRate]);
+
+  const revealTempoControl = useCallback(() => {
+    const songId = nowPlaying?.video.youtube_video_id;
+    if (!songId) return;
+    setShowTempoControl(true);
+    setTempoControlSongId(songId);
+    if (tempoControlHideTimerRef.current) clearTimeout(tempoControlHideTimerRef.current);
+    tempoControlHideTimerRef.current = setTimeout(() => {
+      setShowTempoControl(false);
+      tempoControlHideTimerRef.current = null;
+    }, 1800);
+  }, [nowPlaying?.video.youtube_video_id]);
 
   const toggleNormalizeWithFeedback = useCallback(() => {
     toggleNormalize();
@@ -47,6 +84,7 @@ export default function PlayerPage() {
   useEffect(() => () => {
     if (normalizeFadeTimerRef.current) clearTimeout(normalizeFadeTimerRef.current);
     if (normalizeHideTimerRef.current) clearTimeout(normalizeHideTimerRef.current);
+    if (tempoControlHideTimerRef.current) clearTimeout(tempoControlHideTimerRef.current);
   }, []);
 
   useEffect(() => {
@@ -136,8 +174,12 @@ export default function PlayerPage() {
         onToggle={vocalCut.toggle}
         onSubmitResult={vocalCut.submitResult}
         onPresetChange={vocalCut.setPreset}
+        tempoEnabled={tempoExtensionReady}
+        tempoRate={tempoRate}
+        onAdjustTempo={adjustTempo}
         showNormalizeFeedback={normalizeFeedbackPhase !== 'hidden'}
         normalizeFeedbackFading={normalizeFeedbackPhase === 'fading'}
+        showTempoControl={showTempoControl && tempoControlSongId === nowPlaying?.video.youtube_video_id}
       />
       {roomSetupError && (
         <div
@@ -249,6 +291,8 @@ export default function PlayerPage() {
             ref={playerRef}
             isDisplayMode
             disableVideoInteraction={isQueueBrowserActive}
+            tempoExtensionReady={tempoExtensionReady}
+            onTempoRateChange={handleTempoRateChange}
           />
         </div>
       </div>
@@ -257,6 +301,8 @@ export default function PlayerPage() {
         onRestartCurrentSong={restartCurrentSong}
         onToggleVocalCut={vocalCut.toggle}
         onToggleAutoLevel={toggleNormalizeWithFeedback}
+        onAdjustTempo={adjustTempo}
+        onTempoShortcut={revealTempoControl}
       />
     </div>
   );

@@ -11,10 +11,21 @@ import { getYouTubePlaybackStartSeconds } from '@/lib/youtube-playback';
 interface YouTubePlayerProps {
   isDisplayMode?: boolean; // TV / Projector Display Screen
   disableVideoInteraction?: boolean;
+  tempoExtensionReady: boolean;
+  onTempoRateChange: (playbackRate: number) => void;
+}
+
+export type TempoDirection = 'increase' | 'decrease';
+
+export interface TempoAdjustmentResult {
+  status: 'changed' | 'unavailable' | 'boundary' | 'error';
+  playbackRate: number;
+  message: string;
 }
 
 export interface YouTubePlayerHandle {
   restartCurrentSong: () => void;
+  adjustTempo: (direction: TempoDirection) => TempoAdjustmentResult;
 }
 
 interface YouTubeCaptionController extends YT.Player {
@@ -52,6 +63,8 @@ const getYouTubePlayerErrorMessage = (errorCode: YT.PlayerError): string => {
 export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>(function YouTubePlayer({
   isDisplayMode = false,
   disableVideoInteraction = false,
+  tempoExtensionReady,
+  onTempoRateChange,
 }, ref) {
   const {
     nowPlaying,
@@ -84,11 +97,14 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   const [youtubeApi, setYouTubeApi] = useState<typeof YT | null>(null);
   const [playerError, setPlayerError] = useState<{ itemId: string; message: string } | null>(null);
   const [autoplayBlockedItemId, setAutoplayBlockedItemId] = useState<string | null>(null);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const playbackRateRef = useRef(1);
+  const availablePlaybackRatesRef = useRef<number[]>([]);
+  const tempoExtensionReadyRef = useRef(tempoExtensionReady);
 
   const videoId = nowPlaying?.video?.youtube_video_id || '';
   const currentItemId = nowPlaying?.id || '';
   const playbackStartSeconds = getYouTubePlaybackStartSeconds(nowPlaying?.video?.channel_id);
-  const hasVideo = videoId.length > 0;
 
   const videoIdRef = useRef(videoId);
   const currentItemIdRef = useRef(currentItemId);
@@ -102,6 +118,100 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   const setDurationRef = useRef(setDuration);
   const onSongEndRef = useRef(onSongEnd);
   const handlePlaybackErrorRef = useRef(handlePlaybackError);
+
+  const setLocalPlaybackRate = useCallback((rate: number) => {
+    const normalizedRate = Number.isFinite(rate) ? Math.max(0.25, Math.min(2, rate)) : 1;
+    playbackRateRef.current = normalizedRate;
+    setPlaybackRate(normalizedRate);
+    onTempoRateChange(normalizedRate);
+  }, [onTempoRateChange]);
+
+  const resetTempo = useCallback((player: YT.Player | null = playerRef.current) => {
+    availablePlaybackRatesRef.current = [];
+    setLocalPlaybackRate(1);
+    if (!player || !playerReadyRef.current) return;
+    try {
+      player.setPlaybackRate(1);
+    } catch {
+      // The YouTube player may not accept rate changes until its video is ready.
+    }
+  }, [setLocalPlaybackRate]);
+
+  const readAvailablePlaybackRates = useCallback((player: YT.Player): number[] => {
+    try {
+      const rates = player.getAvailablePlaybackRates()
+        .filter((rate) => Number.isFinite(rate) && rate > 0)
+        .map((rate) => Math.round(rate * 100) / 100);
+      const uniqueRates = Array.from(new Set(rates)).sort((left, right) => left - right);
+      availablePlaybackRatesRef.current = uniqueRates;
+      return uniqueRates;
+    } catch {
+      return availablePlaybackRatesRef.current;
+    }
+  }, []);
+
+  const adjustTempo = useCallback((direction: TempoDirection): TempoAdjustmentResult => {
+    const currentRate = playbackRateRef.current;
+    if (!tempoExtensionReadyRef.current) {
+      return {
+        status: 'unavailable',
+        playbackRate: currentRate,
+        message: 'ต้องเปิด Extension เพื่อปรับ Tempo โดยรักษาคีย์เสียง',
+      };
+    }
+
+    const player = playerRef.current;
+    if (!player || !playerReadyRef.current || !currentItemIdRef.current) {
+      return {
+        status: 'unavailable',
+        playbackRate: currentRate,
+        message: 'ยังไม่มีเพลงที่พร้อมปรับ Tempo',
+      };
+    }
+
+    const rates = readAvailablePlaybackRates(player);
+    if (rates.length < 2) {
+      return {
+        status: 'unavailable',
+        playbackRate: currentRate,
+        message: 'เพลงนี้ไม่รองรับการปรับ Tempo',
+      };
+    }
+
+    const playerRate = Number.isFinite(player.getPlaybackRate())
+      ? Math.round(player.getPlaybackRate() * 100) / 100
+      : currentRate;
+    const currentIndex = rates.reduce((closestIndex, rate, index) => (
+      Math.abs(rate - playerRate) < Math.abs(rates[closestIndex] - playerRate)
+        ? index
+        : closestIndex
+    ), 0);
+    const nextIndex = currentIndex + (direction === 'increase' ? 1 : -1);
+    if (nextIndex < 0 || nextIndex >= rates.length) {
+      return {
+        status: 'boundary',
+        playbackRate: rates[currentIndex],
+        message: direction === 'increase' ? 'Tempo เร็วสุดแล้ว' : 'Tempo ช้าสุดแล้ว',
+      };
+    }
+
+    const nextRate = rates[nextIndex];
+    try {
+      player.setPlaybackRate(nextRate);
+      setLocalPlaybackRate(nextRate);
+      return {
+        status: 'changed',
+        playbackRate: nextRate,
+        message: `Tempo ${nextRate.toFixed(2)}x`,
+      };
+    } catch {
+      return {
+        status: 'error',
+        playbackRate: currentRate,
+        message: 'ไม่สามารถเปลี่ยน Tempo ของเพลงนี้ได้',
+      };
+    }
+  }, [readAvailablePlaybackRates, setLocalPlaybackRate]);
 
   const clearAutoplayCheck = useCallback(() => {
     if (!autoplayCheckTimerRef.current) return;
@@ -149,6 +259,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     setDurationRef.current = setDuration;
     onSongEndRef.current = onSongEnd;
     handlePlaybackErrorRef.current = handlePlaybackError;
+    tempoExtensionReadyRef.current = tempoExtensionReady;
   }, [
     currentItemId,
     handlePlaybackError,
@@ -160,6 +271,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     setCurrentTime,
     setDuration,
     setIsPlaying,
+    tempoExtensionReady,
     videoId,
     volume,
   ]);
@@ -187,7 +299,9 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   // Create one player instance. Event handlers read refs so they always use the latest queue callbacks.
   useEffect(() => {
     const mountElement = playerMountRef.current;
-    if (!youtubeApi || !mountElement || !hasVideo) return;
+    // Warm the iframe as soon as the API is ready, even while the room is idle.
+    // This removes the first-song cost of creating the iframe after the queue RPC.
+    if (!youtubeApi || !mountElement) return;
 
     const playerTarget = document.createElement('div');
     playerTarget.className = 'h-full w-full';
@@ -197,7 +311,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     try {
       const player = new youtubeApi.Player(playerTarget, {
         playerVars: {
-          autoplay: isPlayingRef.current ? 1 : 0,
+          autoplay: isPlayingRef.current && Boolean(videoIdRef.current) ? 1 : 0,
           cc_load_policy: 0,
           controls: isDisplayMode ? 0 : 1,
           modestbranding: 1,
@@ -209,6 +323,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
         events: {
           onReady: (event: YT.PlayerEvent) => {
             playerReadyRef.current = true;
+            resetTempo(event.target);
             disableYouTubeCaptions(event.target);
             event.target.setVolume(volumeRef.current);
             if (shouldMutePlayer(volumeRef.current, isMutedRef.current)) event.target.mute();
@@ -226,6 +341,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
               setCurrentTimeRef.current(readyStartSeconds);
             }
 
+            readAvailablePlaybackRates(event.target);
             setDurationRef.current(event.target.getDuration() || fallbackDurationRef.current);
           },
           onStateChange: (event: YT.OnStateChangeEvent) => {
@@ -241,6 +357,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
               playingItemIdRef.current = currentItemIdRef.current;
               isPlayingRef.current = true;
               setIsPlayingRef.current(true);
+              readAvailablePlaybackRates(event.target);
               setDurationRef.current(event.target.getDuration() || fallbackDurationRef.current);
             } else if (event.data === youtubeApi.PlayerState.PAUSED) {
               if (autoplayAttemptItemIdRef.current === currentItemIdRef.current) return;
@@ -254,8 +371,23 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
               if (!endedItemId || lastHandledItemIdRef.current === endedItemId) return;
 
               lastHandledItemIdRef.current = endedItemId;
+              resetTempo(event.target);
               onSongEndRef.current(endedItemId);
             }
+          },
+          onPlaybackRateChange: (event: YT.OnPlaybackRateChangeEvent) => {
+            const actualRate = Number.isFinite(event.data)
+              ? Math.round(event.data * 100) / 100
+              : 1;
+            if (!tempoExtensionReadyRef.current && actualRate !== 1) {
+              try {
+                event.target.setPlaybackRate(1);
+              } catch {}
+              return;
+            }
+            playbackRateRef.current = actualRate;
+            setPlaybackRate(actualRate);
+            onTempoRateChange(actualRate);
           },
           onApiChange: (event: YT.PlayerEvent) => {
             // YouTube exposes caption controls only after its captions module loads.
@@ -270,6 +402,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
               itemId: failedItemId,
               message: getYouTubePlayerErrorMessage(event.data),
             });
+            resetTempo(event.target);
 
             if (errorAdvanceTimerRef.current) clearTimeout(errorAdvanceTimerRef.current);
             errorAdvanceTimerRef.current = setTimeout(() => {
@@ -293,7 +426,16 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
       playerRef.current = null;
       mountElement.replaceChildren();
     };
-  }, [clearAutoplayCheck, hasVideo, isDisplayMode, reportAutoplayBlocked, verifyAutoplayStarted, youtubeApi]);
+  }, [
+    clearAutoplayCheck,
+    isDisplayMode,
+    onTempoRateChange,
+    readAvailablePlaybackRates,
+    reportAutoplayBlocked,
+    resetTempo,
+    verifyAutoplayStarted,
+    youtubeApi,
+  ]);
 
   // Load the newly selected queue item into the existing player.
   // We snapshot isPlaying into a separate ref (latestIsPlayingRef) that is written on every
@@ -303,6 +445,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   latestIsPlayingRef.current = isPlaying;
 
   useEffect(() => {
+    resetTempo(playerRef.current);
     lastHandledItemIdRef.current = null;
     clearAutoplayCheck();
     if (errorAdvanceTimerRef.current) {
@@ -327,7 +470,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     } catch (error) {
       console.error('Error loading the next video:', error);
     }
-  }, [clearAutoplayCheck, currentItemId, playbackStartSeconds, setCurrentTime, verifyAutoplayStarted, videoId]);
+  }, [clearAutoplayCheck, currentItemId, playbackStartSeconds, resetTempo, setCurrentTime, verifyAutoplayStarted, videoId]);
 
   useEffect(() => {
     return () => {
@@ -350,6 +493,10 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
       }
     } catch {}
   }, [clearAutoplayCheck, currentItemId, isPlaying, verifyAutoplayStarted]);
+
+  useEffect(() => {
+    if (!tempoExtensionReady && playbackRateRef.current !== 1) resetTempo(playerRef.current);
+  }, [resetTempo, tempoExtensionReady]);
 
   // Sync volume / mute state
   useEffect(() => {
@@ -387,7 +534,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     }
   }, [clearAutoplayCheck, setCurrentTime, verifyAutoplayStarted]);
 
-  useImperativeHandle(ref, () => ({ restartCurrentSong }), [restartCurrentSong]);
+  useImperativeHandle(ref, () => ({ restartCurrentSong, adjustTempo }), [adjustTempo, restartCurrentSong]);
 
   // Time tracker loop
   useEffect(() => {
@@ -437,6 +584,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
       // the browser user activation required for audible autoplay.
       if (player.getPlayerState() === YT.PlayerState.ENDED) {
         const restartAtSeconds = playbackStartSecondsRef.current;
+        resetTempo(player);
         player.loadVideoById({ videoId: videoIdRef.current, startSeconds: restartAtSeconds });
         setCurrentTimeRef.current(restartAtSeconds);
       } else {
@@ -467,30 +615,6 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   const visiblePlayerError = playerError?.itemId === currentItemId ? playerError.message : null;
   const isAutoplayBlocked = autoplayBlockedItemId === currentItemId;
 
-  if (!nowPlaying) {
-    if (isDisplayMode) {
-      return (
-        <div
-          className="h-full w-full bg-black"
-          role="img"
-          aria-label="ไม่มีเพลงกำลังเล่น เริ่มพิมพ์เพื่อค้นหาเพลง"
-        />
-      );
-    }
-
-    return (
-      <div className="relative aspect-video w-full rounded-2xl bg-zinc-950/80 border border-zinc-800 flex flex-col items-center justify-center p-6 text-center shadow-2xl overflow-hidden">
-        <div className="w-16 h-16 rounded-full bg-violet-600/20 text-violet-400 flex items-center justify-center mb-4 ring-1 ring-violet-500/30 animate-pulse">
-          <Music className="w-8 h-8" />
-        </div>
-        <h3 className="text-xl font-bold text-white mb-2">No Song Playing</h3>
-        <p className="text-zinc-400 text-sm max-w-md mb-4">
-          Add songs to the queue from the search page or pick from your playlists to get the karaoke session started!
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div
       ref={containerRef}
@@ -501,7 +625,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
       }`}
     >
       {/* Top Banner (Singer & Next Info) */}
-      {!isDisplayMode && <div className="absolute top-0 left-0 right-0 z-20 bg-gradient-to-b from-black/90 via-black/50 to-transparent p-4 flex items-center justify-between pointer-events-none">
+      {!isDisplayMode && nowPlaying && <div className="absolute top-0 left-0 right-0 z-20 bg-gradient-to-b from-black/90 via-black/50 to-transparent p-4 flex items-center justify-between pointer-events-none">
         <div className="flex items-center gap-3">
           <div className="px-3 py-1.5 rounded-full bg-violet-600/80 backdrop-blur-md text-white text-xs font-semibold flex items-center gap-1.5 shadow-lg border border-violet-400/30">
             <Mic className="w-3.5 h-3.5 animate-bounce text-pink-300" />
@@ -526,10 +650,31 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
       <div className="relative flex-1 w-full h-full bg-black">
         <div
           ref={playerMountRef}
-          className={`h-full w-full ${disableVideoInteraction || isDisplayMode ? 'pointer-events-none' : ''}`}
+          aria-hidden={!nowPlaying}
+          className={`absolute inset-0 h-full w-full ${disableVideoInteraction || isDisplayMode || !nowPlaying ? 'pointer-events-none' : ''}`}
         />
 
-        {visiblePlayerError && (
+        {!nowPlaying && (
+          isDisplayMode ? (
+            <div
+              className="absolute inset-0 z-10 bg-black"
+              role="img"
+              aria-label="ไม่มีเพลงกำลังเล่น เริ่มพิมพ์เพื่อค้นหาเพลง"
+            />
+          ) : (
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center overflow-hidden rounded-2xl bg-zinc-950/80 p-6 text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-violet-600/20 text-violet-400 ring-1 ring-violet-500/30 animate-pulse">
+                <Music className="h-8 w-8" />
+              </div>
+              <h3 className="mb-2 text-xl font-bold text-white">No Song Playing</h3>
+              <p className="max-w-md text-sm text-zinc-400">
+                Add songs to the queue from the search page or pick from your playlists to get the karaoke session started!
+              </p>
+            </div>
+          )
+        )}
+
+        {nowPlaying && visiblePlayerError && (
           <div className="absolute inset-0 bg-zinc-950/90 flex flex-col items-center justify-center p-6 text-center z-10">
             <p className="text-amber-400 font-medium mb-3">{visiblePlayerError}</p>
             <button
@@ -541,7 +686,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
           </div>
         )}
 
-        {isAutoplayBlocked && !visiblePlayerError && (
+        {nowPlaying && isAutoplayBlocked && !visiblePlayerError && (
           <div
             className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-zinc-950/90 p-6 text-center backdrop-blur-sm"
             role="status"
@@ -566,7 +711,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
       </div>
 
       {/* Control Bar (Only in Normal Embed Mode) */}
-      {!isDisplayMode && (
+      {!isDisplayMode && nowPlaying && (
         <div className="bg-zinc-950/90 border-t border-zinc-800/80 p-3 flex flex-col gap-2">
           {/* Progress Slider */}
           <div className="flex items-center gap-2 text-xs text-zinc-400 font-mono">
@@ -604,7 +749,10 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
               </button>
 
               <button
-                onClick={() => void skipSong().catch(console.warn)}
+                onClick={() => {
+                  resetTempo(playerRef.current);
+                  void skipSong().catch(console.warn);
+                }}
                 className="p-2 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition"
                 title="Skip to Next"
               >
@@ -614,6 +762,9 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
 
             {/* Volume & Fullscreen */}
             <div className="flex items-center gap-3">
+              <span className="text-[11px] font-medium text-zinc-400" aria-label={`Tempo ${playbackRate.toFixed(2)} เท่า`}>
+                Tempo {playbackRate.toFixed(2)}x
+              </span>
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => setIsMuted(!isMuted)}

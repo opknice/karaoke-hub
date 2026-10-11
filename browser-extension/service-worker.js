@@ -2,6 +2,7 @@ import {
   DEFAULT_AUDIO_STATE,
   normalizeLoudnessStatus,
   normalizePlayerVolume,
+  normalizePlaybackRate,
   normalizeResult,
   normalizePreset,
   normalizeVideoId,
@@ -129,6 +130,7 @@ async function stopCurrentCapture() {
     measuredLoudnessDb: null,
     normalizationGainDb: null,
     limiterReductionDb: null,
+    playbackRate: 1,
     lastError: null,
     tabId: null,
   });
@@ -166,6 +168,7 @@ chrome.action.onClicked.addListener((tab) => {
       measuredLoudnessDb: null,
       normalizationGainDb: null,
       limiterReductionDb: null,
+      playbackRate: 1,
       lastError: null,
       tabId: tab.id,
     });
@@ -191,6 +194,11 @@ chrome.action.onClicked.addListener((tab) => {
         type: 'SET_PLAYER_VOLUME',
         volume: startingState.playerVolume,
         muted: startingState.playerMuted === true,
+      });
+      await chrome.runtime.sendMessage({
+        target: 'offscreen',
+        type: 'SET_PLAYBACK_RATE',
+        playbackRate: startingState.playbackRate,
       });
       await chrome.runtime.sendMessage({
         target: 'offscreen',
@@ -237,6 +245,7 @@ async function handlePageMessage(message, sender) {
       }
       if (isCaptureActive(state, tabId)) {
         await sendToAudioHost({ type: 'RESET_LOUDNESS', preserveGain: false });
+        await sendToAudioHost({ type: 'SET_PLAYBACK_RATE', playbackRate: 1 });
       }
       const preference = await getPreference(videoId);
       const preferredPreset = normalizePreset(preference?.lastPreset) ?? state.preset;
@@ -252,10 +261,31 @@ async function handlePageMessage(message, sender) {
         measuredLoudnessDb: null,
         normalizationGainDb: state.normalizeEnabled ? 0 : null,
         limiterReductionDb: null,
+        playbackRate: 1,
         captureStatus: state.captureStatus === 'capturing_vocal_cut'
           ? 'capturing_original'
           : state.captureStatus,
       });
+      await broadcastState(tabId, nextState);
+      return { ok: true, state: nextState };
+    }
+    case 'SET_PLAYBACK_RATE': {
+      const state = await getSessionState();
+      const playbackRate = normalizePlaybackRate(payload.playbackRate);
+      if (playbackRate === null) {
+        return { ok: false, error: 'ความเร็วเพลงไม่ถูกต้อง', state };
+      }
+      if (!isCaptureActive(state, tabId)) {
+        return { ok: false, error: 'คลิกไอคอน Extension เพื่อเปิดระบบเสียงก่อน', state };
+      }
+      const response = await sendToAudioHost({
+        type: 'SET_PLAYBACK_RATE',
+        playbackRate,
+      });
+      if (!response?.ok) {
+        return { ok: false, error: 'ไม่สามารถรักษาคีย์เสียงตาม Tempo ได้', state };
+      }
+      const nextState = await setSessionState({ playbackRate });
       await broadcastState(tabId, nextState);
       return { ok: true, state: nextState };
     }
@@ -391,6 +421,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           normalizationGainDb: metric('normalizationGainDb'),
           limiterReductionDb: metric('limiterReductionDb'),
           playerVolume: normalizePlayerVolume(payload.playerVolume) ?? current.playerVolume,
+          playbackRate: normalizePlaybackRate(payload.playbackRate) ?? current.playbackRate,
           lastError: message.payload?.lastError ?? null,
           tabId: nextCaptureStatus === 'installed_idle' ? null : current.tabId,
         });

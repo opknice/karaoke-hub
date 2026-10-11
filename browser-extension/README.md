@@ -1,6 +1,6 @@
 # KARAOKE.HUB Audio Extension
 
-Internal technical prototype for local, real-time center attenuation and automatic loudness levelling on the `/player` tab.
+Internal technical prototype for local, real-time center attenuation, pitch-preserved tempo, and automatic loudness levelling on the `/player` tab.
 
 ## Load unpacked
 
@@ -20,6 +20,26 @@ signal, applies slow gain correction, and uses a safety limiter. The existing
 Player Volume and Mute remain the final user controls.
 
 After updating these source files, click **Reload** on the extension card before testing again.
+
+## Pitch-preserved Tempo v0.4
+
+When the extension is capturing the Player tab, use `Page Up` to move to the
+next YouTube-supported playback rate or `Page Down` to move to the previous
+rate. The YouTube player changes the tempo, while the extension's local audio
+worklet applies the inverse pitch correction so the musical key stays stable.
+
+- Tempo is local to the current browser tab. It is not written to Supabase,
+  the room queue, or another device.
+- The control is disabled until the extension capture is active. There is no
+  pitch-changing fallback when the extension is unavailable.
+- A new song, an ended song, a playback error, or stopping the extension resets
+  the rate to `1.00x`.
+- YouTube decides which playback rates each video supports. If a video exposes
+  only one rate, the Player reports that Tempo is unavailable.
+
+Reload the unpacked extension after changing any `browser-extension` source
+file. The `/player` page itself may also need a refresh so it can reconnect to
+the updated extension.
 
 If the player reports a one-channel or low-Stereo-side warning, Vocal Cut remains available. The warning means center attenuation may also reduce centered instruments; it no longer disables the effect automatically.
 

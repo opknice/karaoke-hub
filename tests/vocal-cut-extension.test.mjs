@@ -12,6 +12,7 @@ import {
   isBridgeEnvelope,
   isSupportedPlayerUrl,
   normalizeLoudnessStatus,
+  normalizePlaybackRate,
   normalizePlayerVolume,
   normalizePreset,
   normalizeResult,
@@ -24,6 +25,10 @@ import {
 import {
   StreamingLoudnessNormalizer,
 } from '../browser-extension/loudness-normalizer.mjs';
+import {
+  PitchCorrector,
+  getPitchCorrectionRatio,
+} from '../browser-extension/pitch-corrector.mjs';
 
 function rms(values, start = 0) {
   let energy = 0;
@@ -82,6 +87,47 @@ function runLoudnessNormalizer({
     processor.processBlock(inputLeft, inputRight, outputLeft, outputRight);
   }
   return { processor, metrics: processor.getMetrics() };
+}
+
+function runPitchCorrector(playbackRate, frequency = 440) {
+  const targetSampleRate = 48000;
+  const totalSamples = targetSampleRate * 2;
+  const blockSize = 128;
+  const processor = new PitchCorrector(targetSampleRate);
+  const inputLeft = new Float32Array(blockSize);
+  const inputRight = new Float32Array(blockSize);
+  const outputLeft = new Float32Array(blockSize);
+  const outputRight = new Float32Array(blockSize);
+  const output = new Float32Array(totalSamples);
+  processor.setPlaybackRate(playbackRate);
+
+  for (let offset = 0; offset < totalSamples; offset += blockSize) {
+    for (let index = 0; index < blockSize; index += 1) {
+      const sample = Math.sin((2 * Math.PI * frequency * (offset + index)) / targetSampleRate) * 0.5;
+      inputLeft[index] = sample;
+      inputRight[index] = sample;
+    }
+    processor.processBlock(inputLeft, inputRight, outputLeft, outputRight);
+    output.set(outputLeft, offset);
+  }
+
+  const start = 20000;
+  const correctedFrequency = frequency / playbackRate;
+  let energy = 0;
+  let inPhase = 0;
+  let inQuadrature = 0;
+  for (let index = start; index < totalSamples; index += 1) {
+    const sample = output[index];
+    const phase = (2 * Math.PI * correctedFrequency * index) / targetSampleRate;
+    energy += sample * sample;
+    inPhase += sample * Math.sin(phase);
+    inQuadrature += sample * Math.cos(phase);
+  }
+  const measuredSamples = totalSamples - start;
+  return {
+    rms: Math.sqrt(energy / measuredSamples),
+    toneAmplitude: (2 * Math.hypot(inPhase, inQuadrature)) / measuredSamples,
+  };
 }
 
 test('balanced center attenuation reduces an identical center signal', () => {
@@ -219,6 +265,19 @@ test('loudness normalizer holds gain during silence and resets between tracks', 
   assert.equal(processor.getMetrics().measuredLoudnessDb, null);
 });
 
+test('pitch correction keeps the key while changing tempo', () => {
+  assert.equal(getPitchCorrectionRatio(1.25), 0.8);
+  assert.equal(getPitchCorrectionRatio(0.5), 2);
+
+  const faster = runPitchCorrector(1.25);
+  assert.ok(Math.abs(faster.rms - (0.5 / Math.sqrt(2))) < 0.04);
+  assert.ok(faster.toneAmplitude > 0.44);
+
+  const slower = runPitchCorrector(0.5);
+  assert.ok(Math.abs(slower.rms - (0.5 / Math.sqrt(2))) < 0.04);
+  assert.ok(slower.toneAmplitude > 0.44);
+});
+
 test('track reset ramps normalization gain toward zero instead of stepping', () => {
   const { processor } = runLoudnessNormalizer({ amplitude: 0.5, seconds: 6 });
   const gainBeforeReset = processor.getMetrics().normalizationGainDb;
@@ -253,6 +312,9 @@ test('extension bridge validates URLs, IDs, and envelopes', () => {
   assert.equal(normalizePlayerVolume(84.6), 85);
   assert.equal(normalizePlayerVolume(101), 100);
   assert.equal(normalizePlayerVolume('85'), null);
+  assert.equal(normalizePlaybackRate(1.25), 1.25);
+  assert.equal(normalizePlaybackRate(0.1), null);
+  assert.equal(normalizePlaybackRate(2.01), null);
   assert.equal(isBridgeEnvelope({
     source: EXTENSION_SOURCE,
     version: 1,

@@ -6,6 +6,7 @@ import type {
   VocalCutPreset,
   VocalCutResult,
 } from '@/lib/vocal-cut-bridge';
+import type { TempoAdjustmentResult, TempoDirection } from './YouTubePlayer';
 
 interface PlayerVocalCutStatusProps {
   state: VocalCutExtensionState;
@@ -17,6 +18,10 @@ interface PlayerVocalCutStatusProps {
   onPresetChange: (preset: VocalCutPreset) => void;
   showNormalizeFeedback: boolean;
   normalizeFeedbackFading: boolean;
+  showTempoControl: boolean;
+  tempoEnabled: boolean;
+  tempoRate: number;
+  onAdjustTempo: (direction: TempoDirection) => TempoAdjustmentResult;
 }
 
 const RESULT_LABELS: Record<VocalCutResult, string> = {
@@ -133,6 +138,10 @@ export function PlayerVocalCutStatus({
   onPresetChange,
   showNormalizeFeedback,
   normalizeFeedbackFading,
+  showTempoControl,
+  tempoEnabled,
+  tempoRate,
+  onAdjustTempo,
 }: PlayerVocalCutStatusProps) {
   const presentation = getStatusPresentation(state);
   const StatusIcon = presentation.icon;
@@ -149,11 +158,45 @@ export function PlayerVocalCutStatus({
     : `${Math.round(state.adaptiveCenterConfidence * 100)}%`;
   const showStatusControl = state.enabled || state.captureStatus === 'error';
   const showNotice = Boolean(notice && (hasRequestedFeedback || showNormalizeFeedback));
-
-  if (!showNormalizeFeedback && (!hasRequestedFeedback || (!showStatusControl && !showNotice))) return null;
+  if (!showTempoControl && !showNormalizeFeedback && (!hasRequestedFeedback || (!showStatusControl && !showNotice))) return null;
 
   return (
     <aside className="pointer-events-none absolute left-4 top-4 z-30 flex max-w-[min(24rem,calc(100%-2rem))] flex-col items-start gap-2">
+      {showTempoControl && (
+        <div
+          className="pointer-events-auto flex items-center gap-1.5 rounded-xl border border-white/10 bg-zinc-950/90 px-2 py-1.5 text-zinc-200 shadow-xl backdrop-blur-md"
+          role="group"
+          aria-label="ปรับ Tempo โดยรักษาคีย์เสียง"
+        >
+          <Gauge className="h-3.5 w-3.5 text-cyan-300" aria-hidden="true" />
+          <span className="mr-1 text-[11px] font-semibold">Tempo</span>
+          <button
+            type="button"
+            onClick={() => onAdjustTempo('decrease')}
+            disabled={!tempoEnabled}
+            aria-label="ลด Tempo"
+            title={tempoEnabled ? 'ลด Tempo · Page Down' : 'เปิด Extension เพื่อปรับ Tempo โดยรักษาคีย์เสียง'}
+            className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-xs font-bold transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            −
+          </button>
+          <span className="min-w-12 text-center text-[11px] font-mono font-semibold" aria-live="polite">
+            {tempoRate.toFixed(2)}x
+          </span>
+          <button
+            type="button"
+            onClick={() => onAdjustTempo('increase')}
+            disabled={!tempoEnabled}
+            aria-label="เพิ่ม Tempo"
+            title={tempoEnabled ? 'เพิ่ม Tempo · Page Up' : 'เปิด Extension เพื่อปรับ Tempo โดยรักษาคีย์เสียง'}
+            className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-xs font-bold transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            +
+          </button>
+          {!tempoEnabled && <span className="ml-1 text-[10px] text-zinc-500">Extension off</span>}
+        </div>
+      )}
+
       {showNormalizeFeedback && (
         <div
           role="status"

@@ -1125,7 +1125,12 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (playError) throw new Error(`เพิ่มเพลงแล้ว แต่เริ่มเล่นไม่ได้: ${playError.message}`);
       }
 
-      await refreshRoomQueue(roomId);
+      // The RPC response is authoritative and the local state above already
+      // reflects it. Reconcile with the room in the background so starting the
+      // first song does not wait for two extra reads from Supabase.
+      void refreshRoomQueue(roomId).catch((error: unknown) => {
+        console.warn(error instanceof Error ? error.message : 'Unable to reconcile room queue');
+      });
       return persistedItem;
     },
     [refreshRoomQueue]

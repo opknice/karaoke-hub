@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "KARAOKE.HUB Vocal Cut",
-  "version": "0.3.0",
-  "description": "Local-only Vocal Cut and automatic loudness levelling for the KARAOKE.HUB player tab.",
+  "version": "0.4.0",
+  "description": "Local-only Vocal Cut, pitch-preserved tempo, and automatic loudness levelling for the KARAOKE.HUB player tab.",
   "minimum_chrome_version": "116",
   "permissions": [
     "offscreen",

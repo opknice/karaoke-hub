@@ -44,6 +44,8 @@ export interface VocalCutExtensionState {
   adaptiveCenterGain: number | null;
   preset: VocalCutPreset;
   supportsLoudnessNormalize: boolean;
+  supportsPitchPreservedTempo: boolean;
+  playbackRate: number;
   normalizeEnabled: boolean;
   normalizeStatus: LoudnessNormalizeStatus;
   measuredLoudnessDb: number | null;
@@ -66,6 +68,8 @@ export const INITIAL_VOCAL_CUT_STATE: VocalCutExtensionState = {
   adaptiveCenterGain: null,
   preset: 'balanced',
   supportsLoudnessNormalize: false,
+  supportsPitchPreservedTempo: false,
+  playbackRate: 1,
   normalizeEnabled: false,
   normalizeStatus: 'off',
   measuredLoudnessDb: null,

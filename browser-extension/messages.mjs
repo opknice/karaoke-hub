@@ -13,6 +13,8 @@ export const DEFAULT_AUDIO_STATE = Object.freeze({
   adaptiveCenterGain: null,
   preset: 'balanced',
   supportsLoudnessNormalize: true,
+  supportsPitchPreservedTempo: true,
+  playbackRate: 1,
   normalizeEnabled: false,
   normalizeStatus: 'off',
   measuredLoudnessDb: null,
@@ -70,4 +72,11 @@ export function normalizeLoudnessStatus(value) {
 export function normalizePlayerVolume(value) {
   if (!Number.isFinite(value)) return null;
   return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+export function normalizePlaybackRate(value) {
+  if (!Number.isFinite(value)) return null;
+  const rate = Number(value);
+  if (rate < 0.25 || rate > 2) return null;
+  return Math.round(rate * 100) / 100;
 }

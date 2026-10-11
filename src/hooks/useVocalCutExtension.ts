@@ -130,6 +130,11 @@ export function useVocalCutExtension(
     postToExtension('SET_VOCAL_CUT_PRESET', { preset });
   }, [postToExtension]);
 
+  const setPlaybackRate = useCallback((playbackRate: number) => {
+    if (!Number.isFinite(playbackRate)) return;
+    postToExtension('SET_PLAYBACK_RATE', { playbackRate });
+  }, [postToExtension]);
+
   const toggleNormalize = useCallback(() => {
     setNotice(null);
     if (state.captureStatus === 'checking') {
@@ -154,6 +159,7 @@ export function useVocalCutExtension(
     toggle,
     submitResult,
     setPreset,
+    setPlaybackRate,
     toggleNormalize,
   };
 }

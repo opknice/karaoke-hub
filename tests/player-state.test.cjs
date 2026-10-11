@@ -81,7 +81,7 @@ test('valid saved playback is restored and malformed storage is ignored', () => 
 });
 
 test('player keyboard shortcuts recognize Windows key values and adjust one percent', () => {
-  const { adjustPlayerVolume, getPlayerVolumeShortcut, isPlayerAutoLevelShortcut, isPlayerVocalCutShortcut, shouldMutePlayer } =
+  const { adjustPlayerVolume, getPlayerTempoShortcut, getPlayerVolumeShortcut, isPlayerAutoLevelShortcut, isPlayerVocalCutShortcut, shouldMutePlayer } =
     loadTypeScriptModule('src/lib/player-keyboard.ts');
   const event = (overrides = {}) => ({
     altKey: false,
@@ -106,6 +106,10 @@ test('player keyboard shortcuts recognize Windows key values and adjust one perc
   assert.equal(isPlayerAutoLevelShortcut(event({ key: '/', code: 'NumpadDivide', shiftKey: false })), true);
   assert.equal(isPlayerAutoLevelShortcut(event({ key: '?', code: 'Slash' })), false);
   assert.equal(isPlayerAutoLevelShortcut(event({ key: '/', code: 'Slash', shiftKey: false, ctrlKey: true })), false);
+  assert.equal(getPlayerTempoShortcut(event({ key: 'PageUp', code: 'PageUp', shiftKey: false })), 'increase');
+  assert.equal(getPlayerTempoShortcut(event({ key: 'PageDown', code: 'PageDown', shiftKey: false })), 'decrease');
+  assert.equal(getPlayerTempoShortcut(event({ key: 'PageUp', code: 'PageUp' })), null);
+  assert.equal(getPlayerTempoShortcut(event({ key: 'PageDown', code: 'PageDown', shiftKey: false, altKey: true })), null);
 
   assert.equal(adjustPlayerVolume(85, 'increase'), 86);
   assert.equal(adjustPlayerVolume(85, 'decrease'), 84);

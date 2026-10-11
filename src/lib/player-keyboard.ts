@@ -1,4 +1,5 @@
 export type PlayerVolumeShortcut = 'increase' | 'decrease';
+export type PlayerTempoShortcut = 'increase' | 'decrease';
 
 type PlayerShortcutEvent = Pick<
   KeyboardEvent,
@@ -27,6 +28,15 @@ export function isPlayerVocalCutShortcut(event: PlayerShortcutEvent): boolean {
 export function isPlayerAutoLevelShortcut(event: PlayerShortcutEvent): boolean {
   if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
   return event.key === '/' || event.code === 'NumpadDivide';
+}
+
+export function getPlayerTempoShortcut(
+  event: PlayerShortcutEvent
+): PlayerTempoShortcut | null {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return null;
+  if (event.key === 'PageUp' || event.code === 'PageUp') return 'increase';
+  if (event.key === 'PageDown' || event.code === 'PageDown') return 'decrease';
+  return null;
 }
 
 export function adjustPlayerVolume(
