@@ -82,6 +82,8 @@ class DesktopAudioController {
         this.update({ captureStatus: 'starting', lastError: null });
         await this.audio('START_AUDIO', {}, generation);
         if (generation !== this.generation) return;
+        await this.audio('SET_PRESET', { preset: this.state.preset }, generation);
+        await this.audio('SET_PLAYER_VOLUME', { volume: this.state.playerVolume, muted: this.state.playerMuted }, generation);
         this.update({ captureStatus: 'capturing_original', supportsLoudnessNormalize: true, supportsPitchPreservedTempo: true, lastError: null });
         return;
       }

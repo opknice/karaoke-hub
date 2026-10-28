@@ -98,3 +98,13 @@ test('an in-flight key acknowledgement cannot overwrite a stopped session', asyn
   assert.equal(controller.state.pitchSemitones,0);
   assert.equal(controller.state.captureStatus,'installed_idle');
 });
+test('restarting audio reapplies the selected preset before advertising readiness', async () => {
+  const {controller,audio}=setup();
+  await controller.command('START_AUDIO');
+  await controller.command('SET_VOCAL_CUT_PRESET',{preset:'maximum'});
+  await controller.command('STOP_AUDIO');
+  audio.length=0;
+  await controller.command('START_AUDIO');
+  assert.equal(controller.state.captureStatus,'capturing_original');
+  assert.ok(audio.some(x=>x.type==='SET_PRESET'&&x.payload.preset==='maximum'));
+});
