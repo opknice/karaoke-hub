@@ -6,7 +6,7 @@ const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
   {
-    files: ["scripts/**/*.cjs", "tests/**/*.cjs"],
+    files: ["scripts/**/*.cjs", "tests/**/*.cjs", "desktop/**/*.cjs"],
     rules: {
       // These files intentionally run in Node's CommonJS test/operator runtime.
       "@typescript-eslint/no-require-imports": "off",
@@ -21,6 +21,9 @@ const eslintConfig = defineConfig([
     "build/**",
     "android/**/build/**",
     "android/app/src/main/assets/public/**",
+    "desktop/dist/**",
+    "desktop/audio/assets/**",
+    "desktop/test-results/**",
     "next-env.d.ts",
   ]),
 ]);
