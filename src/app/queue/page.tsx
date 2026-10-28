@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { useKaraoke } from '@/context/KaraokeContext';
+import { useKaraoke, usePlaybackClock } from '@/context/KaraokeContext';
 import { QueueItemCard } from '@/components/QueueItemCard';
 import { calculateEstimatedWait, formatDuration, formatMinutes } from '@/lib/queue-algorithm';
 import { QueueMode } from '@/lib/types';
@@ -30,8 +30,6 @@ export default function QueuePage() {
     setRoomPlayback,
     skipSong,
     previousSong,
-    currentTime,
-    duration,
     queue,
     queueMode,
     setQueueMode,
@@ -39,6 +37,7 @@ export default function QueuePage() {
     setIsQueueLocked,
     clearQueue,
   } = useKaraoke();
+  const { currentTime, duration } = usePlaybackClock();
 
   const [confirmClear, setConfirmClear] = useState(false);
 

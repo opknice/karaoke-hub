@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import { searchKaraokeVideos, YouTubeSearchError } from '@/lib/youtube';
 import { getSearchBudget } from '@/lib/youtube-search-store';
 import { randomUUID } from 'node:crypto';
@@ -11,9 +11,12 @@ export const runtime = 'nodejs';
 export async function POST(request: NextRequest) {
   const existingClient = request.cookies.get('karaoke-search-client')?.value;
   const client = existingClient && /^[a-zA-Z0-9-]{1,64}$/.test(existingClient) ? existingClient : randomUUID();
+  let includeBudget = false;
   const reply = async (body: Record<string, unknown>, status = 200) => {
     let budget: Awaited<ReturnType<typeof getSearchBudget>> | undefined;
-    try { budget = await getSearchBudget(); } catch { /* Keep the original storage error visible. */ }
+    if (includeBudget) {
+      try { budget = await getSearchBudget(); } catch { /* Keep the original storage error visible. */ }
+    }
     const response = NextResponse.json({ ...body, budget }, { status, headers: { 'Cache-Control': 'no-store' } });
     response.cookies.set('karaoke-search-client', client, { httpOnly: true, sameSite: 'strict', path: '/', maxAge: 86400 * 30 });
     return response;
@@ -27,6 +30,7 @@ export async function POST(request: NextRequest) {
     const source = typeof body === 'object' && body !== null && 'source' in body ? body.source : 'catalog';
     if (source !== 'catalog' && source !== 'youtube') return reply({ success: false, error: 'แหล่งค้นหาไม่ถูกต้อง' }, 400);
     const direct = /^(?:https?:\/\/|id:)/i.test(query.trim());
+    includeBudget = source === 'youtube' || direct;
     if (source === 'catalog' && !direct) {
       const { videos, warning } = await searchCatalogWithRefresh(query);
       return reply({ success: true, count: videos.length, data: videos, source, warning });
@@ -34,16 +38,17 @@ export async function POST(request: NextRequest) {
     const results = (await searchKaraokeVideos(query, client)).filter((video) => (
       !isOfficialChannelTitleExcluded(video.channel_id, video.title)
     ));
-    let warning: string | undefined;
-    try { await saveCatalogVideos(results); }
-    catch { warning = 'แสดงผลได้ แต่ยังบันทึกเพลงลงคลัง Supabase ไม่สำเร็จ'; }
-    try { await writeSearchHistory(query, results, direct ? 'video' : 'youtube'); }
-    catch {
-      warning = warning
-        ? `${warning} และยังบันทึกประวัติการค้นหาไม่สำเร็จ`
-        : 'แสดงผลได้ แต่ยังบันทึกประวัติการค้นหาไม่สำเร็จ';
-    }
-    return reply({ success: true, count: results.length, data: results, source: direct ? 'video' : 'youtube', warning });
+    // Keep these writes alive on Vercel without delaying usable search results.
+    after(async () => {
+      const writes = await Promise.allSettled([
+        saveCatalogVideos(results),
+        writeSearchHistory(query, results, direct ? 'video' : 'youtube'),
+      ]);
+      for (const result of writes) {
+        if (result.status === 'rejected') console.warn('Unable to persist search results:', result.reason);
+      }
+    });
+    return reply({ success: true, count: results.length, data: results, source: direct ? 'video' : 'youtube' });
   } catch (error: unknown) {
     console.error('Error in /api/search:', error);
     const status = error instanceof YouTubeSearchError ? error.status : 500;

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams } from 'next/navigation';
-import { useKaraoke } from '@/context/KaraokeContext';
+import { useKaraoke, usePlaybackClock } from '@/context/KaraokeContext';
 import { useAuth } from '@/context/AuthContext';
 import { LyricsGoogleSearchModal } from '@/components/LyricsGoogleSearchModal';
 import { YouTubeVideo } from '@/lib/types';
@@ -39,8 +39,8 @@ export default function GuestJoinPage() {
     addToQueue,
     removeFromQueue,
     currentMember,
-    currentTime,
   } = useKaraoke();
+  const { currentTime } = usePlaybackClock();
 
   const { nickname, setNickname } = useAuth();
 

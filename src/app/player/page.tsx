@@ -15,7 +15,7 @@ import { useKaraoke } from '@/context/KaraokeContext';
 import { useVocalCutExtension } from '@/hooks/useVocalCutExtension';
 
 export default function PlayerPage() {
-  const { activeRoom, ensureActiveRoom, nowPlaying, volume, isMuted } = useKaraoke();
+  const { activeRoom, ensureActiveRoom, nowPlaying, volume, isMuted, roomSyncError, refreshRoomQueue } = useKaraoke();
   const [isQueueBrowserActive, setIsQueueBrowserActive] = useState(false);
   const [showQRQuickModal, setShowQRQuickModal] = useState(false);
   const [isMobileLandscape, setIsMobileLandscape] = useState(false);
@@ -194,6 +194,15 @@ export default function PlayerPage() {
             className="shrink-0 rounded-lg bg-white/10 px-3 py-1.5 font-semibold hover:bg-white/20 disabled:cursor-wait disabled:opacity-60"
           >
             {isRetryingRoom ? 'กำลังลองใหม่…' : 'ลองใหม่'}
+          </button>
+        </div>
+      )}
+
+      {activeRoom && roomSyncError && !roomSetupError && (
+        <div role="status" className="fixed bottom-4 left-1/2 z-[60] flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-3 rounded-xl border border-amber-400/40 bg-zinc-950/95 px-4 py-3 text-sm text-amber-100 shadow-xl">
+          <span>{roomSyncError}</span>
+          <button type="button" onClick={() => void refreshRoomQueue().catch(console.warn)} className="shrink-0 rounded-lg bg-white/10 px-3 py-1.5 font-semibold hover:bg-white/20">
+            เชื่อมต่อใหม่
           </button>
         </div>
       )}

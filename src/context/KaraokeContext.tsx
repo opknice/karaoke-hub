@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState, useCallback, useRef, useId } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef, useId, useSyncExternalStore } from 'react';
 import {
   QueueItem,
   QueueMode,
@@ -18,13 +18,13 @@ import { QueueAdvanceReason } from '@/lib/queue-transition';
 import { getSupabaseBrowserClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { ensureSupabaseIdentity } from '@/lib/supabase/anonymous-auth';
 import { restoreStoredPlaybackState } from '@/lib/player-state';
+import { createPlaybackClock } from '@/lib/playback-clock';
+import { createRoomRefreshGuard, QueueRequestError, retryQueueOperation } from '@/lib/queue-recovery';
 
 interface KaraokeContextType {
   // Playback
   nowPlaying: QueueItem | null;
   isPlaying: boolean;
-  currentTime: number;
-  duration: number;
   volume: number;
   isMuted: boolean;
   isTVModeActive: boolean;
@@ -36,8 +36,10 @@ interface KaraokeContextType {
   setIsMuted: (muted: boolean) => void;
   skipSong: () => Promise<void>;
   previousSong: () => void;
-  onSongEnd: (expectedItemId: string) => void;
-  handlePlaybackError: (expectedItemId: string) => void;
+  onSongEnd: (expectedItemId: string) => Promise<void>;
+  handlePlaybackError: (expectedItemId: string) => Promise<void>;
+  roomSyncError: string;
+  refreshRoomQueue: () => Promise<void>;
 
   // Queue
   queue: QueueItem[];
@@ -91,6 +93,7 @@ interface KaraokeContextType {
 }
 
 const KaraokeContext = createContext<KaraokeContextType | null>(null);
+const PlaybackClockContext = createContext<ReturnType<typeof createPlaybackClock> | null>(null);
 
 const STORAGE_KEYS = {
   QUEUE: 'karaoke_queue',
@@ -296,8 +299,9 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // Playback state
   const [nowPlaying, setNowPlaying] = useState<QueueItem | null>(null);
   const [isPlaying, setIsPlayingState] = useState<boolean>(false);
-  const [currentTime, setCurrentTimeState] = useState<number>(0);
-  const [duration, setDurationState] = useState<number>(0);
+  const [playbackClock] = useState(createPlaybackClock);
+  const setCurrentTimeState = playbackClock.setCurrentTime;
+  const setDurationState = playbackClock.setDuration;
   const [volume, setVolumeState] = useState<number>(85);
   const [isMuted, setIsMutedState] = useState<boolean>(false);
   const [isTVModeActive, setIsTVModeActive] = useState<boolean>(false);
@@ -326,8 +330,8 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const nowPlayingRef = useRef<QueueItem | null>(nowPlaying);
   const queueRef = useRef<QueueItem[]>(queue);
   const isPlayingRef = useRef<boolean>(isPlaying);
-  const currentTimeRef = useRef<number>(currentTime);
-  const durationRef = useRef<number>(duration);
+  const currentTimeRef = useRef<number>(0);
+  const durationRef = useRef<number>(0);
   const queueModeRef = useRef<QueueMode>(queueMode);
   const activeRoomRef = useRef<Room | null>(activeRoom);
   const currentMemberRef = useRef<RoomMember | null>(currentMember);
@@ -335,6 +339,12 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const lastTimeBroadcastRef = useRef<number>(0);
   const transitioningItemIdRef = useRef<string | null>(null);
   const roomInitializationPromiseRef = useRef<Promise<Room> | null>(null);
+  const [roomSyncError, setRoomSyncError] = useState('');
+  const [roomRefreshGuard] = useState(createRoomRefreshGuard);
+  const updateActiveRoomReference = useCallback((room: Room | null, newSession = false) => {
+    if (newSession || activeRoomRef.current?.id !== room?.id) roomRefreshGuard.invalidate();
+    activeRoomRef.current = room;
+  }, [roomRefreshGuard]);
 
   useEffect(() => {
     nowPlayingRef.current = nowPlaying;
@@ -349,20 +359,12 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [isPlaying]);
 
   useEffect(() => {
-    currentTimeRef.current = currentTime;
-  }, [currentTime]);
-
-  useEffect(() => {
-    durationRef.current = duration;
-  }, [duration]);
-
-  useEffect(() => {
     queueModeRef.current = queueMode;
   }, [queueMode]);
 
   useEffect(() => {
-    activeRoomRef.current = activeRoom;
-  }, [activeRoom]);
+    updateActiveRoomReference(activeRoom);
+  }, [activeRoom, updateActiveRoomReference]);
 
   useEffect(() => {
     currentMemberRef.current = currentMember;
@@ -548,7 +550,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 setDurationState(msg.payload.duration);
               }
               if (msg.payload.activeRoom !== undefined) {
-                activeRoomRef.current = msg.payload.activeRoom;
+                updateActiveRoomReference(msg.payload.activeRoom);
                 setActiveRoom(msg.payload.activeRoom);
               }
             }
@@ -589,7 +591,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
             break;
 
           case 'ROOM_UPDATED':
-            activeRoomRef.current = msg.payload;
+            updateActiveRoomReference(msg.payload);
             setActiveRoom(msg.payload);
             break;
 
@@ -621,7 +623,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
           setIsPlayingState(nextIsPlaying);
         } else if (e.key === STORAGE_KEYS.ROOM) {
           const nextRoom: Room = JSON.parse(e.newValue);
-          activeRoomRef.current = nextRoom;
+          updateActiveRoomReference(nextRoom);
           setActiveRoom(nextRoom);
         }
       } catch (err) {
@@ -637,7 +639,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
         channelRef.current.close();
       }
     };
-  }, [tabId]);
+  }, [tabId, setCurrentTimeState, setDurationState, updateActiveRoomReference]);
 
   // 3. Sync to LocalStorage whenever state changes
   useEffect(() => {
@@ -705,38 +707,45 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
       .sort((left, right) => left.position - right.position)
       .map((item, index) => ({ ...item, position: index + 1 }));
 
-    queueRef.current = queuedItems;
-    nowPlayingRef.current = playingItem;
+    const queueChanged = JSON.stringify(queueRef.current) !== JSON.stringify(queuedItems);
+    const songChanged = JSON.stringify(nowPlayingRef.current) !== JSON.stringify(playingItem);
     const nextIsPlaying = Boolean(playingItem) && playbackIsPlaying;
+    const playbackChanged = isPlayingRef.current !== nextIsPlaying;
+    if (queueChanged) queueRef.current = queuedItems;
+    if (songChanged) nowPlayingRef.current = playingItem;
     isPlayingRef.current = nextIsPlaying;
-    transitioningItemIdRef.current = null;
-    setQueue(queuedItems);
-    setNowPlaying(playingItem);
-    setIsPlayingState(nextIsPlaying);
+    if (queueChanged) setQueue(queuedItems);
+    if (songChanged) setNowPlaying(playingItem);
+    if (playbackChanged) setIsPlayingState(nextIsPlaying);
     if (!playingItem) {
       setCurrentTimeState(0);
     }
-  }, []);
+  }, [setCurrentTimeState]);
 
   const refreshRoomQueue = useCallback(
     async (roomId: string = activeRoomRef.current?.id ?? ''): Promise<void> => {
-      if (!roomId) return;
+      if (!roomId || activeRoomRef.current?.id !== roomId) return;
+      const isLatest = roomRefreshGuard.begin(roomId);
+      const isCurrent = () => isLatest(activeRoomRef.current?.id);
       const supabase = getSupabaseBrowserClient();
       if (!supabase) throw new Error('ระบบ Queue ยังไม่พร้อมใช้งาน');
-
+      try {
       const [queueResult, playbackResult] = await Promise.all([
         supabase
           .from('queue_items')
           .select('*')
           .eq('room_id', roomId)
           .in('status', ['playing', 'queued'])
-          .order('position', { ascending: true }),
+          .order('position', { ascending: true })
+          .abortSignal(AbortSignal.timeout(12_000)),
         supabase
           .from('rooms')
           .select('playback_is_playing')
           .eq('id', roomId)
+          .abortSignal(AbortSignal.timeout(12_000))
           .maybeSingle(),
       ]);
+      if (!isCurrent()) return;
 
       if (queueResult.error) throw new Error(`ไม่สามารถโหลด Queue ได้: ${queueResult.error.message}`);
 
@@ -752,9 +761,15 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const playbackIsPlaying = playbackColumnUnavailable
         ? true
         : playbackResult.data?.playback_is_playing !== false;
+      setRoomSyncError('');
       applyAuthoritativeQueueRows((queueResult.data ?? []) as unknown as SupabaseQueueRow[], playbackIsPlaying);
+      } catch (error) {
+        if (!isCurrent()) return;
+        setRoomSyncError(error instanceof Error ? error.message : 'ไม่สามารถซิงก์คิวเพลงได้ กรุณาลองใหม่');
+        throw error;
+      }
     },
-    [applyAuthoritativeQueueRows]
+    [applyAuthoritativeQueueRows, roomRefreshGuard]
   );
 
   // Realtime is reflection-only: Postgres RPCs are the sole queue state machine.
@@ -768,6 +783,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
     let channel: ReturnType<typeof supabase.channel> | null = null;
 
     const scheduleRefresh = () => {
+      if (cancelled) return;
       if (refreshTimer) clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => {
         void refreshRoomQueue(activeRoom.id).catch((error: unknown) => {
@@ -777,9 +793,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
 
     void ensureSupabaseIdentity()
-      .then(async () => {
-        if (cancelled) return;
-        await refreshRoomQueue(activeRoom.id);
+      .then(() => {
         if (cancelled) return;
 
         channel = supabase
@@ -805,17 +819,35 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
             scheduleRefresh
           )
           .subscribe((status) => {
+            if (cancelled) return;
+            if (status === 'SUBSCRIBED') scheduleRefresh();
             if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
               console.warn(`Supabase room queue subscription status: ${status}`);
+              setRoomSyncError('การเชื่อมต่อคิวเพลงสะดุด ระบบกำลังเชื่อมต่อใหม่');
             }
           });
+        scheduleRefresh();
       })
       .catch((error: unknown) => {
+        if (cancelled) return;
+        setRoomSyncError(error instanceof Error ? error.message : 'ไม่สามารถเชื่อมต่อคิวเพลงได้');
         console.warn(error instanceof Error ? error.message : 'Unable to initialize room queue');
       });
 
+    const refreshWhenVisible = () => {
+      if (document.visibilityState !== 'hidden') scheduleRefresh();
+    };
+    const fallbackTimer = window.setInterval(refreshWhenVisible, 30_000);
+    window.addEventListener('online', refreshWhenVisible);
+    window.addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+
     return () => {
       cancelled = true;
+      window.clearInterval(fallbackTimer);
+      window.removeEventListener('online', refreshWhenVisible);
+      window.removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
       if (refreshTimer) clearTimeout(refreshTimer);
       if (channel) void supabase.removeChannel(channel);
     };
@@ -932,13 +964,13 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
         });
       }
     },
-    [broadcast]
+    [broadcast, setCurrentTimeState]
   );
 
   const setDuration = useCallback((dur: number) => {
     durationRef.current = dur;
     setDurationState(dur);
-  }, []);
+  }, [setDurationState]);
 
   const setVolume = useCallback((vol: number) => {
     setVolumeState(vol);
@@ -961,17 +993,22 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
 
       transitioningItemIdRef.current = current.id;
+      const isCurrentSession = roomRefreshGuard.capture();
       try {
         await ensureSupabaseIdentity();
         const supabase = getSupabaseBrowserClient();
         if (!supabase) throw new Error('ระบบ Queue ยังไม่พร้อมใช้งาน');
 
-        const { data, error } = await supabase.rpc('advance_queue', {
-          p_room_id: roomId,
-          p_expected_playing_id: current.database_id,
-          p_reason: reason,
-        });
-        if (error) throw new Error(`ไม่สามารถเปลี่ยนเพลงได้: ${error.message}`);
+        const data = await retryQueueOperation(async () => {
+          const result = await supabase.rpc('advance_queue', {
+            p_room_id: roomId,
+            p_expected_playing_id: current.database_id,
+            p_reason: reason,
+          }).abortSignal(AbortSignal.timeout(12_000));
+          if (result.error) throw new QueueRequestError(`ไม่สามารถเปลี่ยนเพลงได้: ${result.error.message}`, result.status);
+          return result.data;
+        }, () => isCurrentSession() && activeRoomRef.current?.id === roomId && nowPlayingRef.current?.id === current.id);
+        if (data === undefined || !isCurrentSession() || activeRoomRef.current?.id !== roomId) return;
         if (isRecord(data) && data.changed === false) {
           await refreshRoomQueue(roomId);
           return;
@@ -992,11 +1029,16 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
         currentTimeRef.current = 0;
         setCurrentTimeState(0);
         await refreshRoomQueue(roomId);
+      } catch (error) {
+        if (isCurrentSession() && activeRoomRef.current?.id === roomId) {
+          setRoomSyncError(error instanceof Error ? error.message : 'เปลี่ยนเพลงไม่สำเร็จ กรุณาลองใหม่');
+        }
+        throw error;
       } finally {
         transitioningItemIdRef.current = null;
       }
     },
-    [logHistory, refreshRoomQueue]
+    [logHistory, refreshRoomQueue, setCurrentTimeState, roomRefreshGuard]
   );
 
   const playQueueItem = useCallback(
@@ -1010,6 +1052,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const current = nowPlayingRef.current;
       if (current && transitioningItemIdRef.current === current.id) return;
       transitioningItemIdRef.current = current?.id ?? selected.id;
+      const isCurrentSession = roomRefreshGuard.capture();
       try {
         await ensureSupabaseIdentity();
         const supabase = getSupabaseBrowserClient();
@@ -1019,6 +1062,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
           p_item_id: selected.database_id,
           p_expected_playing_id: current?.database_id ?? null,
         });
+        if (!isCurrentSession() || activeRoomRef.current?.id !== roomId) return;
         if (error) throw new Error(`ไม่สามารถเล่นเพลงที่เลือกได้: ${error.message}`);
         if (isRecord(data) && data.changed === false) {
           await refreshRoomQueue(roomId);
@@ -1038,12 +1082,12 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
         transitioningItemIdRef.current = null;
       }
     },
-    [logHistory, refreshRoomQueue]
+    [logHistory, refreshRoomQueue, setCurrentTimeState, roomRefreshGuard]
   );
 
   // When current song ends: Auto-advance to next in queue.
   const onSongEnd = useCallback((expectedItemId: string) => {
-    void advancePlayback('ended', expectedItemId).catch(console.warn);
+    return advancePlayback('ended', expectedItemId);
   }, [advancePlayback]);
 
   // Skip current song from a user action.
@@ -1051,14 +1095,14 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   // Unavailable/restricted videos must not block the rest of the queue.
   const handlePlaybackError = useCallback((expectedItemId: string) => {
-    void advancePlayback('error', expectedItemId).catch(console.warn);
+    return advancePlayback('error', expectedItemId);
   }, [advancePlayback]);
 
   // Previous song
   const previousSong = useCallback(() => {
     currentTimeRef.current = 0;
     setCurrentTimeState(0);
-  }, []);
+  }, [setCurrentTimeState]);
 
   // Add song to Queue
   const addToQueue = useCallback(
@@ -1071,6 +1115,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
     ): Promise<QueueItem> => {
       const roomId = activeRoomRef.current?.id;
       const member = currentMemberRef.current;
+      const isCurrentSession = roomRefreshGuard.capture();
       if (!roomId || !member || member.room_id !== roomId) {
         throw new Error('กรุณาเข้าห้อง Karaoke ก่อนเพิ่มเพลง');
       }
@@ -1103,6 +1148,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
 
       const persistedItem = mapSupabaseQueueRow(data as unknown as SupabaseQueueRow);
+      if (!isCurrentSession() || activeRoomRef.current?.id !== roomId) return persistedItem;
       if (persistedItem.status === 'playing') {
         nowPlayingRef.current = persistedItem;
         isPlayingRef.current = true;
@@ -1133,7 +1179,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
       });
       return persistedItem;
     },
-    [refreshRoomQueue]
+    [refreshRoomQueue, roomRefreshGuard]
   );
 
   // Remove song from queue
@@ -1338,7 +1384,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
         localStorage.setItem(STORAGE_KEYS.DAILY_ROOM_LOCK, JSON.stringify(lock));
       }
 
-      activeRoomRef.current = roomObj;
+      updateActiveRoomReference(roomObj, true);
       currentMemberRef.current = hostMember;
       setActiveRoom(roomObj);
       setCurrentMember(hostMember);
@@ -1347,7 +1393,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
       return roomObj;
     },
-    [broadcast]
+    [broadcast, updateActiveRoomReference]
   );
 
   const ensureActiveRoom = useCallback(
@@ -1373,7 +1419,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
               parsedMember.role === 'host' &&
               parsedMember.user_id === identity.userId
             ) {
-              activeRoomRef.current = parsed.room;
+              updateActiveRoomReference(parsed.room);
               currentMemberRef.current = parsedMember;
               setActiveRoom(parsed.room);
               setCurrentMember(parsedMember);
@@ -1386,14 +1432,14 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
             localStorage.removeItem(STORAGE_KEYS.ROOM);
             localStorage.removeItem(STORAGE_KEYS.MEMBER);
             localStorage.removeItem(STORAGE_KEYS.MEMBERS);
-            activeRoomRef.current = null;
+            updateActiveRoomReference(null);
             setActiveRoom(null);
             setCurrentMember(null);
             setRoomMembers([]);
           } else {
             // A room restored without a daily host lock belongs to a guest/legacy session.
             // Do not expose its QR while the Player is preparing today's host room.
-            activeRoomRef.current = null;
+            updateActiveRoomReference(null);
             setActiveRoom(null);
             setCurrentMember(null);
             setRoomMembers([]);
@@ -1404,7 +1450,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
           localStorage.removeItem(STORAGE_KEYS.ROOM);
           localStorage.removeItem(STORAGE_KEYS.MEMBER);
           localStorage.removeItem(STORAGE_KEYS.MEMBERS);
-          activeRoomRef.current = null;
+          updateActiveRoomReference(null);
           setActiveRoom(null);
           setCurrentMember(null);
           setRoomMembers([]);
@@ -1426,7 +1472,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
       }
     },
-    [broadcast, createRoom]
+    [broadcast, createRoom, updateActiveRoomReference]
   );
 
   const resetDailyRoom = useCallback(
@@ -1471,7 +1517,7 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
         throw new Error('ข้อมูลสมาชิกไม่ตรงกับเซสชันผู้ใช้');
       }
 
-      activeRoomRef.current = targetRoom;
+      updateActiveRoomReference(targetRoom, true);
       currentMemberRef.current = guestMember;
       setActiveRoom(targetRoom);
       setCurrentMember(guestMember);
@@ -1480,17 +1526,17 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
       return true;
     },
-    [broadcast]
+    [broadcast, updateActiveRoomReference]
   );
 
   const leaveRoom = useCallback(() => {
-    activeRoomRef.current = null;
+    updateActiveRoomReference(null, true);
     currentMemberRef.current = null;
     setActiveRoom(null);
     setCurrentMember(null);
     setRoomMembers([]);
     broadcast({ type: 'ROOM_UPDATED', payload: null });
-  }, [broadcast]);
+  }, [broadcast, updateActiveRoomReference]);
 
   const approveRequest = useCallback(
     (itemId: string) => {
@@ -1518,12 +1564,11 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, []);
 
   return (
+    <PlaybackClockContext.Provider value={playbackClock}>
     <KaraokeContext.Provider
       value={{
         nowPlaying,
         isPlaying,
-        currentTime,
-        duration,
         volume,
         isMuted,
         isTVModeActive,
@@ -1537,6 +1582,8 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
         previousSong,
         onSongEnd,
         handlePlaybackError,
+        roomSyncError,
+        refreshRoomQueue,
 
         queue,
         queueMode,
@@ -1585,8 +1632,15 @@ export const KaraokeProvider: React.FC<{ children: React.ReactNode }> = ({ child
     >
       {children}
     </KaraokeContext.Provider>
+    </PlaybackClockContext.Provider>
   );
 };
+
+export function usePlaybackClock() {
+  const clock = useContext(PlaybackClockContext);
+  if (!clock) throw new Error('usePlaybackClock must be used within a KaraokeProvider');
+  return useSyncExternalStore(clock.subscribe, clock.getSnapshot, clock.getServerSnapshot);
+}
 
 export function useKaraoke() {
   const context = useContext(KaraokeContext);

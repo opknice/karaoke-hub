@@ -16,7 +16,13 @@ interface ClientSearchCacheEntry {
 const CLIENT_SEARCH_CACHE_TTL_MS = 60 * 60 * 1000;
 const MAX_CLIENT_SEARCH_CACHE_ENTRIES = 100;
 const clientSearchCache = new Map<string, ClientSearchCacheEntry>();
-const requests = new Map<string, Promise<YouTubeVideo[]>>();
+interface SharedSearchRequest {
+  promise: Promise<YouTubeVideo[]>;
+  controller: AbortController;
+  consumers: number;
+}
+const requests = new Map<string, SharedSearchRequest>();
+const SEARCH_REQUEST_TIMEOUT_MS = 45_000;
 let hydrated = false;
 const STORAGE_KEY = 'karaoke-search-cache-v1';
 
@@ -110,13 +116,59 @@ export async function searchYouTubeKaraoke(
 
   let pending = requests.get(cacheKey);
   if (!pending) {
-    pending = fetchSearch(normalizedQuery, source, cacheKey).finally(() => requests.delete(cacheKey));
+    const controller = new AbortController();
+    const entry: SharedSearchRequest = {
+      controller,
+      consumers: 0,
+      promise: fetchSearch(normalizedQuery, source, cacheKey, controller.signal),
+    };
+    entry.promise = entry.promise.finally(() => {
+      if (requests.get(cacheKey) === entry) requests.delete(cacheKey);
+    });
+    pending = entry;
     requests.set(cacheKey, pending);
   }
-  const results = await pending;
+  const results = await waitForSearchRequest(cacheKey, pending, signal);
   signal?.throwIfAborted();
   return isDirectVideoQuery(normalizedQuery) ? results
     : rankKaraokeVideos(results, normalizedQuery, 'song', true);
+}
+
+function waitForSearchRequest(
+  cacheKey: string,
+  request: SharedSearchRequest,
+  signal?: AbortSignal
+): Promise<YouTubeVideo[]> {
+  request.consumers++;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      settled = true;
+      signal?.removeEventListener('abort', abort);
+      request.consumers--;
+    };
+    const abort = () => {
+      if (settled) return;
+      cleanup();
+      reject(signal?.reason ?? new DOMException('Search cancelled', 'AbortError'));
+      // A second caller may still need this shared search.
+      if (request.consumers === 0) {
+        if (requests.get(cacheKey) === request) requests.delete(cacheKey);
+        request.controller.abort();
+      }
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) { abort(); return; }
+    request.promise.then((results) => {
+      if (settled) return;
+      cleanup();
+      resolve(results);
+    }, (error: unknown) => {
+      if (settled) return;
+      cleanup();
+      reject(error);
+    });
+  });
 }
 
 export async function searchPlayerKaraoke(
@@ -135,12 +187,23 @@ export async function searchPlayerKaraoke(
   return { videos: await searchYouTubeKaraoke(query, signal, 'youtube'), source: 'youtube' };
 }
 
-async function fetchSearch(normalizedQuery: string, source: 'catalog' | 'youtube', cacheKey: string): Promise<YouTubeVideo[]> {
-  const response = await fetch('/api/search', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: normalizedQuery, source }),
-  });
-  const payload: unknown = await response.json();
+async function fetchSearch(normalizedQuery: string, source: 'catalog' | 'youtube', cacheKey: string, signal: AbortSignal): Promise<YouTubeVideo[]> {
+  const deadline = AbortSignal.timeout(SEARCH_REQUEST_TIMEOUT_MS);
+  const requestSignal = AbortSignal.any([signal, deadline]);
+  let response: Response;
+  let payload: unknown;
+  try {
+    response = await fetch('/api/search', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: normalizedQuery, source }),
+      signal: requestSignal,
+    });
+    payload = await response.json();
+    requestSignal.throwIfAborted();
+  } catch (error) {
+    if (deadline.aborted) throw new Error('ค้นหาใช้เวลานานเกินไป กรุณาลองใหม่');
+    throw error;
+  }
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('karaoke-search-warning', {
       detail: isRecord(payload) && typeof payload.warning === 'string' ? payload.warning : '',

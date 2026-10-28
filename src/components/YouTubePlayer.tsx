@@ -1,7 +1,7 @@
 'use client';
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { useKaraoke } from '@/context/KaraokeContext';
+import { useKaraoke, usePlaybackClock } from '@/context/KaraokeContext';
 import { Play, Pause, SkipForward, SkipBack, Volume2, VolumeX, Maximize2, Mic, Music } from 'lucide-react';
 import { formatDuration } from '@/lib/queue-algorithm';
 import { loadYouTubeIframeApi } from '@/lib/youtube-iframe-api';
@@ -69,8 +69,6 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   const {
     nowPlaying,
     isPlaying,
-    currentTime,
-    duration,
     volume,
     isMuted,
     setIsPlaying,
@@ -84,6 +82,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     handlePlaybackError,
     queue,
   } = useKaraoke();
+  const { currentTime, duration } = usePlaybackClock();
 
   const playerRef = useRef<YT.Player | null>(null);
   const playerMountRef = useRef<HTMLDivElement>(null);
@@ -95,7 +94,9 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   const errorAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoplayCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [youtubeApi, setYouTubeApi] = useState<typeof YT | null>(null);
-  const [playerError, setPlayerError] = useState<{ itemId: string; message: string } | null>(null);
+  const [apiAttempt, setApiAttempt] = useState(0);
+  const [initializationError, setInitializationError] = useState('');
+  const [playerError, setPlayerError] = useState<{ itemId: string; message: string; advanceReason?: 'ended' | 'error' } | null>(null);
   const [autoplayBlockedItemId, setAutoplayBlockedItemId] = useState<string | null>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
   const playbackRateRef = useRef(1);
@@ -219,6 +220,21 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     autoplayCheckTimerRef.current = null;
   }, []);
 
+  const advanceAfterPlayback = useCallback((itemId: string, reason: 'ended' | 'error') => {
+    if (!itemId || currentItemIdRef.current !== itemId || lastHandledItemIdRef.current === itemId) return;
+    lastHandledItemIdRef.current = itemId;
+    const advance = reason === 'ended' ? onSongEndRef.current : handlePlaybackErrorRef.current;
+    void advance(itemId).catch((error: unknown) => {
+      if (currentItemIdRef.current !== itemId) return;
+      lastHandledItemIdRef.current = null;
+      setPlayerError({
+        itemId,
+        advanceReason: reason,
+        message: error instanceof Error ? error.message : 'เปลี่ยนเพลงไม่สำเร็จ กรุณาลองใหม่',
+      });
+    });
+  }, []);
+
   const reportAutoplayBlocked = useCallback((itemId: string) => {
     if (!itemId || currentItemIdRef.current !== itemId) return;
     clearAutoplayCheck();
@@ -282,19 +298,22 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
 
     void loadYouTubeIframeApi()
       .then((api) => {
-        if (!cancelled) setYouTubeApi(api);
+        if (!cancelled) {
+          setInitializationError('');
+          setYouTubeApi(api);
+        }
       })
       .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : 'Unable to load the YouTube player.';
-        if (!cancelled && currentItemIdRef.current) {
-          setPlayerError({ itemId: currentItemIdRef.current, message });
+        console.warn('Unable to initialize YouTube:', error);
+        if (!cancelled) {
+          setInitializationError('โหลดเครื่องเล่น YouTube ไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่');
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [apiAttempt]);
 
   // Create one player instance. Event handlers read refs so they always use the latest queue callbacks.
   useEffect(() => {
@@ -307,6 +326,9 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     playerTarget.className = 'h-full w-full';
     mountElement.replaceChildren(playerTarget);
     playerReadyRef.current = false;
+    const readyTimer = setTimeout(() => {
+      setInitializationError('เครื่องเล่น YouTube ไม่ตอบสนอง กรุณาลองโหลดใหม่');
+    }, 15_000);
 
     try {
       const player = new youtubeApi.Player(playerTarget, {
@@ -322,6 +344,8 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
         },
         events: {
           onReady: (event: YT.PlayerEvent) => {
+            clearTimeout(readyTimer);
+            setInitializationError('');
             playerReadyRef.current = true;
             resetTempo(event.target);
             disableYouTubeCaptions(event.target);
@@ -370,9 +394,8 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
               if (endedItemId !== currentItemIdRef.current) return;
               if (!endedItemId || lastHandledItemIdRef.current === endedItemId) return;
 
-              lastHandledItemIdRef.current = endedItemId;
               resetTempo(event.target);
-              onSongEndRef.current(endedItemId);
+              advanceAfterPlayback(endedItemId, 'ended');
             }
           },
           onPlaybackRateChange: (event: YT.OnPlaybackRateChangeEvent) => {
@@ -406,7 +429,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
 
             if (errorAdvanceTimerRef.current) clearTimeout(errorAdvanceTimerRef.current);
             errorAdvanceTimerRef.current = setTimeout(() => {
-              handlePlaybackErrorRef.current(failedItemId);
+              advanceAfterPlayback(failedItemId, 'error');
             }, 1500);
           },
           onAutoplayBlocked: () => {
@@ -417,9 +440,12 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
       playerRef.current = player;
     } catch (err) {
       console.error('Failed to instantiate YouTube Player', err);
+      clearTimeout(readyTimer);
+      queueMicrotask(() => setInitializationError('เปิดเครื่องเล่น YouTube ไม่สำเร็จ กรุณาลองใหม่'));
     }
 
     return () => {
+      clearTimeout(readyTimer);
       playerReadyRef.current = false;
       clearAutoplayCheck();
       playerRef.current?.destroy();
@@ -427,6 +453,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
       mountElement.replaceChildren();
     };
   }, [
+    advanceAfterPlayback,
     clearAutoplayCheck,
     isDisplayMode,
     onTempoRateChange,
@@ -654,6 +681,19 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
           className={`absolute inset-0 h-full w-full ${disableVideoInteraction || isDisplayMode || !nowPlaying ? 'pointer-events-none' : ''}`}
         />
 
+        {initializationError && (
+          <div role="alert" className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-4 bg-zinc-950/95 p-6 text-center">
+            <p className="text-amber-300">{initializationError}</p>
+            <button type="button" onClick={() => {
+              setInitializationError('');
+              setYouTubeApi(null);
+              setApiAttempt((attempt) => attempt + 1);
+            }} className="rounded-xl bg-violet-600 px-5 py-3 font-semibold text-white hover:bg-violet-500">
+              ลองโหลดเครื่องเล่นใหม่
+            </button>
+          </div>
+        )}
+
         {!nowPlaying && (
           isDisplayMode ? (
             <div
@@ -678,10 +718,19 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
           <div className="absolute inset-0 bg-zinc-950/90 flex flex-col items-center justify-center p-6 text-center z-10">
             <p className="text-amber-400 font-medium mb-3">{visiblePlayerError}</p>
             <button
-              onClick={() => void skipSong().catch(console.warn)}
+              onClick={() => {
+                if (playerError?.advanceReason) {
+                  advanceAfterPlayback(currentItemId, playerError.advanceReason);
+                } else {
+                  void skipSong().catch((error: unknown) => setPlayerError({
+                    itemId: currentItemId,
+                    message: error instanceof Error ? error.message : 'เปลี่ยนเพลงไม่สำเร็จ กรุณาลองใหม่',
+                  }));
+                }
+              }}
               className="px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-semibold text-sm transition"
             >
-              Skip to Next Song
+              {playerError?.advanceReason ? 'ลองเปลี่ยนเพลงใหม่' : 'Skip to Next Song'}
             </button>
           </div>
         )}
