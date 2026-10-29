@@ -31,5 +31,6 @@ for(const name of ['onnxruntime','onnxruntime_directml-1.24.4.dist-info'])fs.cpS
 fs.copyFileSync(config.model,path.join(target,'UVR_MDXNET_Main.onnx'));
 const info=JSON.parse(execFileSync(path.join(python,'python.exe'),['-c','import json,sys,numpy,scipy,onnxruntime as ort; from scipy.fft import rfft,irfft; print(json.dumps({"python":sys.version.split()[0],"prefix":sys.prefix,"numpy":numpy.__version__,"scipy":scipy.__version__,"ort":ort.__version__,"providers":ort.get_available_providers()}))'],{windowsHide:true,encoding:'utf8',env:{SystemRoot:process.env.SystemRoot,WINDIR:process.env.WINDIR,TEMP:process.env.TEMP,TMP:process.env.TMP}}));
 if(info.prefix!==python||!info.python.startsWith('3.12.')||info.numpy!=='2.2.6'||info.scipy!=='1.15.3'||info.ort!=='1.24.4'||!info.providers.includes('DmlExecutionProvider'))throw new Error('Portable runtime validation failed');
-fs.writeFileSync(path.join(target,'manifest.json'),JSON.stringify({...info,modelSha256:hash(path.join(target,'UVR_MDXNET_Main.onnx'))},null,2));
+const manifest={...info,pythonLocation:'python',modelSha256:hash(path.join(target,'UVR_MDXNET_Main.onnx'))};delete manifest.prefix;
+fs.writeFileSync(path.join(target,'manifest.json'),JSON.stringify(manifest,null,2));
 console.log('Prepared isolated Python 3.12 / DirectML runtime and verified UVR model');

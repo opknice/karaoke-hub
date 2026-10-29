@@ -37,10 +37,10 @@ async function wait(read,check,label,timeout=30000){const until=Date.now()+timeo
   if(process.argv.includes('--screenshots')){
    const directory=path.resolve(__dirname,'../../build/verification');fs.mkdirSync(directory,{recursive:true});
    for(const width of [1440,960]){
-    await app.evaluate(({BrowserWindow},width)=>BrowserWindow.getAllWindows().find(window=>window.isVisible()).setContentSize(width,900),width);
+    await app.evaluate(({BrowserWindow},width)=>{const window=BrowserWindow.getAllWindows().find(window=>window.webContents.getURL()==='karaoke-app://app/ui/index.html');if(window.isMinimized())window.restore();if(window.isMaximized())window.unmaximize();window.show();window.setContentSize(width,900);},width);
     await new Promise(resolve=>setTimeout(resolve,300));
     assert.deepEqual(await shell.evaluate(()=>[...document.querySelectorAll('header button')].filter(button=>{const rect=button.getBoundingClientRect();return rect.right>innerWidth||rect.left<0;}).map(button=>button.id)),[],'Live AI toolbar fits window');
-    const png=await app.evaluate(async({BrowserWindow})=>(await BrowserWindow.getAllWindows().find(window=>window.isVisible()).capturePage()).toPNG().toString('base64'));
+    const png=await app.evaluate(async({BrowserWindow})=>(await BrowserWindow.getAllWindows().find(window=>window.webContents.getURL()==='karaoke-app://app/ui/index.html').capturePage()).toPNG().toString('base64'));
     fs.writeFileSync(path.join(directory,`vocal-packaged-${width}.png`),Buffer.from(png,'base64'));
     await remote.screenshot({path:path.join(directory,`vocal-player-${width}.png`)});
    }
@@ -68,11 +68,13 @@ async function wait(read,check,label,timeout=30000){const until=Date.now()+timeo
    assert.equal(resumed.vocalRemoverStatus,'on',JSON.stringify(resumed));
   }
   const beforeOff=await media('window.__karaokeVocalVideo.snapshot()');
+  const offAt=Date.now(),offRate=(await state()).playbackRate;
   await shell.locator('#vocal-remover').click();
   await wait(state,s=>!s.vocalRemoverEnabled,'Original restored');
   assert.equal(await media('Boolean(window.__karaokeVocalVideo)'),false);
   const restoredTime=await media('(document.querySelector("video.html5-main-video")||document.querySelector("video")).currentTime');
-  assert.ok(Math.abs(restoredTime-beforeOff.displayTime)<.5,`Original playback position preserved: ${restoredTime} vs ${beforeOff.displayTime}`);
+  const forward=restoredTime-beforeOff.displayTime,elapsed=(Date.now()-offAt)/1000;
+  assert.ok(forward>=-.5&&forward<=elapsed*offRate+.5,`Original playback position preserved including ${elapsed}s of normal playback: ${restoredTime} vs ${beforeOff.displayTime}`);
   if(process.argv.includes('--extended')){
    await shell.locator('#vocal-remover').click();await wait(state,s=>s.vocalRemoverStatus==='on','AI enabled again',7000);
    await media('(()=>{const video=document.querySelector("video.html5-main-video")||document.querySelector("video");video.currentTime=video.duration-1.5;})()');
