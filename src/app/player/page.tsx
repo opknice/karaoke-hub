@@ -13,6 +13,7 @@ import {
 } from '@/components/YouTubePlayer';
 import { useKaraoke } from '@/context/KaraokeContext';
 import { useVocalCutExtension } from '@/hooks/useVocalCutExtension';
+import { getVideoVersion } from '@/lib/video-version';
 
 export default function PlayerPage() {
   const { activeRoom, ensureActiveRoom, nowPlaying, volume, isMuted, roomSyncError, refreshRoomQueue } = useKaraoke();
@@ -36,7 +37,9 @@ export default function PlayerPage() {
   const vocalCut = useVocalCutExtension(
     nowPlaying?.video.youtube_video_id ?? null,
     volume,
-    isMuted
+    isMuted,
+    getVideoVersion(nowPlaying?.video),
+    nowPlaying?.id ?? null
   );
   const toggleNormalize = vocalCut.toggleNormalize;
   const setExtensionPlaybackRate = vocalCut.setPlaybackRate;

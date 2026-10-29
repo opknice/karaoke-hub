@@ -11,6 +11,7 @@ import {
   type VocalCutPreset,
   type VocalCutResult,
 } from '@/lib/vocal-cut-bridge';
+import type { VideoVersion } from '@/lib/types';
 
 const EXTENSION_DETECTION_MS = 1200;
 
@@ -29,7 +30,9 @@ function createRequestId(): string {
 export function useVocalCutExtension(
   youtubeVideoId: string | null,
   playerVolume: number,
-  playerMuted: boolean
+  playerMuted: boolean,
+  versionType: VideoVersion = 'karaoke',
+  queueItemId: string | null = null
 ) {
   const [state, setState] = useState<VocalCutExtensionState>(INITIAL_VOCAL_CUT_STATE);
   const [notice, setNotice] = useState<string | null>(null);
@@ -90,8 +93,8 @@ export function useVocalCutExtension(
   }, [postToExtension]);
 
   useEffect(() => {
-    postToExtension('TRACK_CHANGED', { youtubeVideoId });
-  }, [postToExtension, youtubeVideoId]);
+    postToExtension('TRACK_CHANGED', { youtubeVideoId, versionType, queueItemId });
+  }, [postToExtension, youtubeVideoId, versionType, queueItemId]);
 
   useEffect(() => {
     if (!state.supportsLoudnessNormalize) return;

@@ -2,6 +2,10 @@ let state={},busy=false;
 const $=id=>document.getElementById(id);
 function render(next=state) {
   state=next;
+  $('version-karaoke').setAttribute('aria-pressed',String(state.searchVersion!=='mv'));
+  $('version-mv').setAttribute('aria-pressed',String(state.searchVersion==='mv'));
+  $('vocal-remover').disabled=true;
+  $('vocal-remover').title=state.vocalRemoverEligible?'Vocal Remover AI ยังไม่พร้อมใช้งาน':'ใช้ได้เฉพาะเพลง MV ที่กำลังเล่น';
   const active=state.captureStatus==='capturing_original';
   const ready=active&&Boolean(state.currentVideoId);
   $('pitch').textContent=state.pitchSemitones>0?`+${state.pitchSemitones}`:String(state.pitchSemitones??0);
@@ -24,6 +28,8 @@ async function command(type,payload={}) {
   finally{busy=false;render();}
 }
 $('audio').onclick=()=>command(state.captureStatus==='capturing_original'?'STOP_AUDIO':'START_AUDIO');
+$('version-karaoke').onclick=()=>command('SET_SEARCH_VERSION',{version:'karaoke'});
+$('version-mv').onclick=()=>command('SET_SEARCH_VERSION',{version:'mv'});
 $('pitch-down').onclick=()=>command('SET_PITCH',{semitones:state.pitchSemitones-1});
 $('pitch-up').onclick=()=>command('SET_PITCH',{semitones:state.pitchSemitones+1});
 $('tempo-down').onclick=()=>command('TEMPO_DOWN');$('tempo-up').onclick=()=>command('TEMPO_UP');

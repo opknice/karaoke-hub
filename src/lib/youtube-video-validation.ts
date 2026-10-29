@@ -7,6 +7,7 @@ export function isYouTubeVideo(value: unknown): value is YouTubeVideo {
     && typeof video.title === 'string' && typeof video.channel_name === 'string'
     && typeof video.thumbnail_url === 'string' && typeof video.duration === 'number'
     && typeof video.embeddable === 'boolean' && typeof video.karaoke_score === 'number'
+    && (video.version_type === undefined || video.version_type === 'karaoke' || video.version_type === 'mv')
     && (video.views_count === undefined || (typeof video.views_count === 'number' && Number.isFinite(video.views_count)))
     && (video.artist === undefined || typeof video.artist === 'string')
     && (video.last_synced_at === undefined || typeof video.last_synced_at === 'string');

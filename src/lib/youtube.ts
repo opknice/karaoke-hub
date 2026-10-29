@@ -3,7 +3,8 @@ import 'server-only';
 import type { YouTubeVideo } from './types';
 import { searchSeedVideos, SEED_KARAOKE_VIDEOS } from './karaoke-seed';
 import { rankKaraokeVideos } from './youtube-ranking';
-import { readStoredSearch, writeStoredSearch, reserveSearch, releaseSearch, markUpstreamQuotaExhausted, SearchBudgetError } from './youtube-search-store';
+import { isKaraokeTitle } from './video-version';
+import { readStoredSearch, writeStoredSearch, reserveSearch, releaseSearch, markUpstreamQuotaExhausted, musicVideoSearchKey, karaokeSearchKey, SearchBudgetError } from './youtube-search-store';
 
 const VIDEO_DETAILS_CACHE_TTL_MS = 60 * 60 * 1000;
 const SEARCH_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -414,7 +415,8 @@ function buildYouTubeQuery(query: string): string {
 
 async function fetchYouTubeSearch(
   query: string,
-  apiKey: string
+  apiKey: string,
+  version: 'karaoke' | 'mv' = 'karaoke'
 ): Promise<YouTubeVideo[]> {
   const searchUrl = new URL('https://www.googleapis.com/youtube/v3/search');
   searchUrl.searchParams.set('part', 'snippet');
@@ -424,7 +426,8 @@ async function fetchYouTubeSearch(
   searchUrl.searchParams.set('order', 'relevance');
   searchUrl.searchParams.set('regionCode', 'TH');
   searchUrl.searchParams.set('relevanceLanguage', 'th');
-  searchUrl.searchParams.set('q', buildYouTubeQuery(query));
+  searchUrl.searchParams.set('q', version === 'mv' ? query : buildYouTubeQuery(query));
+  if (version === 'mv') searchUrl.searchParams.set('videoCategoryId', '10');
   searchUrl.searchParams.set('key', apiKey);
 
   let response: Response;
@@ -507,7 +510,8 @@ async function performKaraokeSearch(normalizedQuery: string, client: string): Pr
     return fallbackResults;
   }
 
-  const stored = await readStoredSearch(normalizedQuery);
+  const key = karaokeSearchKey(normalizedQuery);
+  const stored = await readStoredSearch(key);
   if (stored) {
     if (Date.now() - stored.updatedAt < VIDEO_DETAILS_CACHE_TTL_MS && stored.results.every((video) =>
       video.views_count === undefined || Date.now() - Date.parse(video.last_synced_at ?? '') < VIDEO_DETAILS_CACHE_TTL_MS
@@ -518,7 +522,7 @@ async function performKaraokeSearch(normalizedQuery: string, client: string): Pr
   }
   if (!normalizedQuery) return enrichAndRankCandidates(localResults, '', apiKey);
   let token: string;
-  try { token = await reserveSearch(normalizedQuery, client); }
+  try { token = await reserveSearch(key, client); }
   catch (error: unknown) {
     if (error instanceof SearchBudgetError) throw new YouTubeSearchError(error.message, 429);
     throw new YouTubeSearchError('เปิดฐานข้อมูล Cache/งบค้นหาไม่ได้ กรุณาตรวจสอบเซิร์ฟเวอร์', 503);
@@ -526,10 +530,10 @@ async function performKaraokeSearch(normalizedQuery: string, client: string): Pr
   try {
     const youtubeResults = await fetchYouTubeSearch(normalizedQuery, apiKey);
     const results = await enrichAndRankCandidates(mergeCandidates(localResults, youtubeResults), normalizedQuery, apiKey);
-    await writeStoredSearch(normalizedQuery, results);
+    await writeStoredSearch(key, results);
     return results;
   } finally {
-    try { await releaseSearch(normalizedQuery, token); }
+    try { await releaseSearch(key, token); }
     catch { console.warn('Unable to release the Supabase search lease; it will expire automatically.'); }
   }
 }
@@ -538,11 +542,12 @@ export async function searchKaraokeVideos(query: string, client = 'local'): Prom
   const trimmed = query.trim().replace(/\s+/g, ' ');
   const videoId = extractVideoId(trimmed);
   const normalizedQuery = videoId ? `id:${videoId}` : trimmed.toLocaleLowerCase('th-TH');
-  const cached = searchCache.get(normalizedQuery);
+  const key = karaokeSearchKey(normalizedQuery);
+  const cached = searchCache.get(key);
   if (cached && Date.now() < cached.expiresAt) return videoId ? cached.results
     : rankKaraokeVideos(cached.results, normalizedQuery, 'song', true);
 
-  const activeRequest = searchRequests.get(normalizedQuery);
+  const activeRequest = searchRequests.get(key);
   if (activeRequest) return activeRequest;
 
   const request = performKaraokeSearch(normalizedQuery, client)
@@ -550,7 +555,7 @@ export async function searchKaraokeVideos(query: string, client = 'local'): Prom
       const ttl = results.length > 0
         ? SEARCH_CACHE_TTL_MS
         : EMPTY_SEARCH_CACHE_TTL_MS;
-      cacheSearchResults(normalizedQuery, results, ttl);
+      cacheSearchResults(key, results, ttl);
       return results;
     })
     .catch((error: unknown) => {
@@ -570,9 +575,55 @@ export async function searchKaraokeVideos(query: string, client = 'local'): Prom
       throw error;
     })
     .finally(() => {
-      searchRequests.delete(normalizedQuery);
+      searchRequests.delete(key);
     });
 
-  searchRequests.set(normalizedQuery, request);
+  searchRequests.set(key, request);
+  return request;
+}
+
+export async function searchMusicVideos(query: string, client = 'local'): Promise<YouTubeVideo[]> {
+  const trimmed = query.trim().replace(/\s+/g, ' ');
+  const videoId = extractVideoId(trimmed);
+  const normalized = videoId ? `id:${videoId}` : trimmed.toLocaleLowerCase('th-TH');
+  const key = musicVideoSearchKey(normalized);
+  const select = (videos: readonly YouTubeVideo[]): YouTubeVideo[] => videos
+    .filter(video => video.embeddable && !isKaraokeTitle(video.title))
+    .map(video => ({ ...video, version_type: 'mv' }));
+  const cached = searchCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return select(cached.results);
+  const pending = searchRequests.get(key);
+  if (pending) return pending;
+  const request = (async () => {
+    const apiKey = process.env.YOUTUBE_API_KEY?.trim();
+    if (!apiKey) throw new YouTubeSearchError('ยังไม่ได้ตั้งค่า YouTube API Key สำหรับค้นหา MV', 503);
+    if (!videoId && /^(?:https?:\/\/|id:)/i.test(trimmed)) throw new YouTubeSearchError('กรุณาวางลิงก์วิดีโอ YouTube ที่ถูกต้อง', 400);
+    if (videoId) {
+      const details = await getVideoDetails([videoId], apiKey);
+      const value = details.get(videoId);
+      if (value === undefined) throw new YouTubeSearchError('ตรวจสอบวิดีโอไม่สำเร็จ กรุณาลองใหม่', 502);
+      if (!value || !value.embeddable) throw new YouTubeSearchError('วิดีโอนี้ไม่พร้อมเล่นแบบฝัง', 422);
+      const result = select(applyLiveDetails(createSearchVideos([{videoId,title:value.title,channelId:value.channelId,channelTitle:value.channelTitle,thumbnailUrl:value.thumbnailUrl}]),details));
+      if (!result.length) throw new YouTubeSearchError('วิดีโอนี้เป็น Karaoke หรือ Instrumental กรุณาเลือกโหมด Karaoke', 422);
+      return result;
+    }
+    const stored = await readStoredSearch(key);
+    if (stored && Date.now() - stored.updatedAt < VIDEO_DETAILS_CACHE_TTL_MS) return select(stored.results);
+    if (stored) return select(applyLiveDetails(stored.results, await getVideoDetails(stored.results.map(video=>video.youtube_video_id),apiKey)));
+    let token: string;
+    try { token = await reserveSearch(key, client); }
+    catch (error) { throw new YouTubeSearchError(error instanceof Error ? error.message : 'เปิดงบค้นหาไม่ได้', error instanceof SearchBudgetError ? 429 : 503); }
+    try {
+      const candidates = await fetchYouTubeSearch(normalized, apiKey, 'mv');
+      const results = select(applyLiveDetails(candidates, await getVideoDetails(candidates.map(video=>video.youtube_video_id),apiKey)));
+      await writeStoredSearch(key, results);
+      return results;
+    } finally { await releaseSearch(key, token).catch(()=>console.warn('Unable to release MV search lease')); }
+  })().then(results => { cacheSearchResults(key,results,results.length ? SEARCH_CACHE_TTL_MS : EMPTY_SEARCH_CACHE_TTL_MS); return results; })
+    .catch(error => {
+      if (cached && cached.results.length && Date.now() - cached.expiresAt < 23 * 60 * 60_000) return select(cached.results).map(video=>({...video,views_count:undefined}));
+      throw error;
+    }).finally(()=>searchRequests.delete(key));
+  searchRequests.set(key, request);
   return request;
 }

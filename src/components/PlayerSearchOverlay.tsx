@@ -10,6 +10,8 @@ import {
 import Image from 'next/image';
 import { Check, Gauge, ListMusic, Loader2, Music2, Search, Volume2 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { usePlayerSearchVersion } from '@/hooks/usePlayerSearchVersion';
+import { getVideoVersion } from '@/lib/video-version';
 import { useKaraoke } from '@/context/KaraokeContext';
 import { formatDuration } from '@/lib/queue-algorithm';
 import type { YouTubeVideo } from '@/lib/types';
@@ -90,6 +92,8 @@ export function PlayerSearchOverlay({
   onAdjustTempo,
   onTempoShortcut,
 }: PlayerSearchOverlayProps) {
+  const {version: videoVersion, setVersion: setVideoVersion, desktop} = usePlayerSearchVersion();
+  const videoVersionRef = useRef(videoVersion);
   const {
     activeRoom,
     addToQueue,
@@ -136,7 +140,7 @@ export function PlayerSearchOverlay({
   const [submittedLyricsQuery, setSubmittedLyricsQuery] = useState('');
   const [isLyricsModalOpen, setIsLyricsModalOpen] = useState(false);
   const localCatalog = useLocalCatalog((resultQuery, videos) => {
-    if (catalogModeRef.current !== 'local' || queryRef.current.trim() !== resultQuery) return;
+    if (videoVersionRef.current !== 'karaoke' || catalogModeRef.current !== 'local' || queryRef.current.trim() !== resultQuery) return;
     setRawResults(videos);
     setSelectedIndex(-1);
     setStatus('idle');
@@ -148,12 +152,12 @@ export function PlayerSearchOverlay({
   const cancelLocalSearch = localCatalog.cancelSearch;
   const setLocalPanelOpen = localCatalog.setPanelOpen;
   const receivePreview = useCallback((videos: YouTubeVideo[]) => {
-    if (catalogModeRef.current !== 'supabase') return;
+    if (videoVersionRef.current !== 'karaoke' || catalogModeRef.current !== 'supabase') return;
     setRawResults(videos);
     setSelectedIndex(-1);
     setCatalogSearchSettled(true);
   }, []);
-  const catalogError = useCatalogPreview(query, localCatalog.initialized && status === 'idle' && localCatalog.mode === 'supabase', receivePreview);
+  const catalogError = useCatalogPreview(query, videoVersion === 'karaoke' && localCatalog.initialized && status === 'idle' && localCatalog.mode === 'supabase', receivePreview);
 
   const trimmedQuery = query.trim();
   const isOpen = query.length > 0 || showPopular || showLyricsInput || localCatalog.panelOpen || localCatalog.busy === 'downloading';
@@ -163,8 +167,11 @@ export function PlayerSearchOverlay({
   const selectedQueueItem =
     queue.find((item) => item.id === selectedQueueItemId) ?? queue[0] ?? null;
   const results = useMemo(
-    () => (showPopular || isDirectVideoQuery(trimmedQuery) ? rawResults : rankKaraokeVideos(rawResults, trimmedQuery, mode, status === 'success')).slice(0, MAX_VISIBLE_RESULTS),
-    [mode, rawResults, trimmedQuery, status, showPopular]
+    () => {
+      const matching = rawResults.filter(video => getVideoVersion(video) === videoVersion);
+      return (videoVersion === 'mv' || showPopular || isDirectVideoQuery(trimmedQuery) ? matching : rankKaraokeVideos(matching, trimmedQuery, mode, status === 'success')).slice(0, MAX_VISIBLE_RESULTS);
+    },
+    [mode, rawResults, trimmedQuery, status, showPopular, videoVersion]
   );
   const selectedSearchResult = results[selectedIndex];
   const activeDescendantId = isQueueBrowserActive
@@ -234,19 +241,20 @@ export function PlayerSearchOverlay({
     setErrorMessage('');
     setLocalResultsActive(false);
     setCatalogSearchSettled(false);
-    if (catalogModeRef.current === 'local') {
+    if (videoVersion === 'karaoke' && catalogModeRef.current === 'local') {
       setRawResults([]);
       if (value.trim().length >= MIN_SEARCH_LENGTH && !isDirectVideoQuery(value)) {
         searchLocalCatalog(value.trim(), searchModeRef.current);
       }
     } else {
-      setRawResults(getLocalSearchPreview(value));
+      setRawResults(getLocalSearchPreview(value, videoVersion));
     }
     setStatus('idle');
-    setSearchSource('catalog');
-  }, [searchLocalCatalog]);
+    setSearchSource(videoVersion === 'mv' ? 'youtube' : 'catalog');
+  }, [searchLocalCatalog, videoVersion]);
 
   const openPopular = useCallback(async () => {
+    if (videoVersionRef.current !== 'karaoke') return;
     requestRef.current?.abort();
     const controller = new AbortController();
     requestRef.current = controller;
@@ -274,7 +282,7 @@ export function PlayerSearchOverlay({
   useEffect(() => {
     const previous = catalogModeRef.current;
     catalogModeRef.current = localCatalog.mode;
-    if (previous === localCatalog.mode && !(localCatalog.mode === 'local' && localCatalog.ready)) return;
+    if (videoVersion !== 'karaoke' || (previous === localCatalog.mode && !(localCatalog.mode === 'local' && localCatalog.ready))) return;
     const timer = window.setTimeout(() => {
       requestRef.current?.abort();
       setStatus('idle');
@@ -295,7 +303,7 @@ export function PlayerSearchOverlay({
       }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [localCatalog.mode, localCatalog.ready, searchLocalCatalog]);
+  }, [localCatalog.mode, localCatalog.ready, searchLocalCatalog, videoVersion]);
 
   const openQueueBrowser = useCallback((direction: 'up' | 'down') => {
     const initialItem = direction === 'down' ? queue[0] : queue[queue.length - 1];
@@ -360,7 +368,7 @@ export function PlayerSearchOverlay({
           }
           verifiedVideo = payload.video;
         }
-        const queuedItem = await addToQueue(verifiedVideo, nickname, [nickname]);
+        const queuedItem = await addToQueue({...verifiedVideo, version_type: getVideoVersion(video)}, nickname, [nickname]);
         setSuccessMessage(
           queuedItem.status === 'playing'
             ? `กำลังเริ่ม “${video.title}”`
@@ -430,12 +438,13 @@ export function PlayerSearchOverlay({
   }, [focusSearchInput]);
 
   const submitSearch = useCallback(async (source: 'catalog' | 'youtube' = 'catalog') => {
+    if (videoVersion === 'mv') source = 'youtube';
     if (requestRef.current && !requestRef.current.signal.aborted) return;
     const normalizedQuery = query.trim();
 
     if (normalizedQuery.length < MIN_SEARCH_LENGTH) return;
 
-    if (source === 'catalog' && localCatalog.mode === 'local' && !isDirectVideoQuery(normalizedQuery)) {
+    if (videoVersion === 'karaoke' && source === 'catalog' && localCatalog.mode === 'local' && !isDirectVideoQuery(normalizedQuery)) {
       if (localResultsActive && rawResults.length > 0) {
         setSelectedIndex(0);
         setStatus('success');
@@ -475,7 +484,7 @@ export function PlayerSearchOverlay({
         normalizedQuery, controller.signal, onlineSource, () => {
           setSearchSource('youtube');
           setRawResults([]);
-        }
+        }, videoVersion
       );
       if (controller.signal.aborted) return;
 
@@ -493,7 +502,29 @@ export function PlayerSearchOverlay({
         requestRef.current = null;
       }
     }
-  }, [query, localCatalog.mode, localCatalog.ready, cancelLocalSearch, localResultsActive, rawResults.length]);
+  }, [query, localCatalog.mode, localCatalog.ready, cancelLocalSearch, localResultsActive, rawResults.length, videoVersion]);
+
+  useEffect(() => {
+    if (videoVersionRef.current === videoVersion) return;
+    videoVersionRef.current = videoVersion;
+    requestRef.current?.abort();
+    requestRef.current = null;
+    cancelLocalSearch();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setRawResults([]);
+      setSelectedIndex(-1);
+      setErrorMessage('');
+      setStatus('idle');
+      setShowPopular(false);
+      setLocalResultsActive(false);
+      setCatalogSearchSettled(false);
+      setLocalPanelOpen(false);
+      if (queryRef.current.trim().length >= MIN_SEARCH_LENGTH) void submitSearch(videoVersion === 'mv' ? 'youtube' : 'catalog');
+    });
+    return () => { cancelled = true; };
+  }, [videoVersion, cancelLocalSearch, setLocalPanelOpen, submitSearch]);
 
   useEffect(() => {
     return () => {
@@ -706,6 +737,9 @@ export function PlayerSearchOverlay({
 
   return (
     <>
+      {!desktop && <div className="absolute left-4 top-4 z-[60] flex gap-1 rounded-xl border border-white/15 bg-zinc-950/95 p-1" role="group" aria-label="ประเภทเพลง">
+        {(['karaoke','mv'] as const).map(version => <button key={version} type="button" aria-pressed={videoVersion===version} onClick={()=>setVideoVersion(version)} className={`rounded-lg px-3 py-2 text-xs font-bold ${videoVersion===version?'bg-cyan-700 text-white':'text-zinc-300 hover:bg-white/10'}`}>{version==='mv'?'MV / เพลงปกติ':'Karaoke'}</button>)}
+      </div>}
       <section
         className={
           isIdleGuideVisible ? idleStyles.screen : isOpen
@@ -755,7 +789,7 @@ export function PlayerSearchOverlay({
               }} className="shrink-0 rounded-lg border border-violet-400/30 bg-violet-500/15 px-2.5 py-1 text-xs font-bold text-violet-200">
                 {mode === 'song' ? 'ชื่อเพลง' : 'ศิลปิน'}
               </button>
-              {localCatalog.mode === 'local' ? (
+              {videoVersion === 'mv' ? <button type="button" disabled={status === 'loading'} onClick={()=>void submitSearch('youtube')} className="rounded-lg bg-cyan-700 px-3 py-2 text-sm text-white disabled:opacity-50">ค้นหา MV</button> : localCatalog.mode === 'local' ? (
                 <button
                   type="button"
                   onClick={() => void submitSearch()}
@@ -769,10 +803,10 @@ export function PlayerSearchOverlay({
                 <button type="button" disabled={status === 'loading'} onClick={() => void submitSearch()} className="rounded-lg bg-violet-600 px-3 py-2 text-sm text-white disabled:opacity-50">ค้นในคลัง</button>
               )}
             </div>
-            {isIdleGuideVisible && <PlayerIdleKeyboardHints onPopular={() => void openPopular()} onLyrics={toggleLyricsInput} />}
+            {isIdleGuideVisible && videoVersion === 'karaoke' && <PlayerIdleKeyboardHints onPopular={() => void openPopular()} onLyrics={toggleLyricsInput} />}
             {showPopular && <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-violet-200"><span>เพลงยอดนิยมในคลัง · ↑↓ เลือกเพลง แล้วกด Enter</span><button type="button" onClick={closeSearch} className="rounded-lg border border-white/20 px-3 py-2 text-white">กลับหน้ารอ (Esc)</button>{status === 'error' && <button type="button" onClick={() => void openPopular()} className="rounded-lg bg-violet-700 px-3 py-2 text-white">ลองโหลดใหม่</button>}</div>}
 
-            {isOpen && (
+            {isOpen && videoVersion === 'karaoke' && (
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3 text-xs">
                 <div className="inline-flex rounded-lg border border-zinc-700 bg-zinc-900 p-0.5" role="group" aria-label="แหล่งค้นเพลง">
                   <button type="button" aria-pressed={localCatalog.mode === 'supabase'} onClick={localCatalog.chooseSupabase}
@@ -789,7 +823,7 @@ export function PlayerSearchOverlay({
               </div>
             )}
 
-            {localCatalog.panelOpen && (
+            {videoVersion === 'karaoke' && localCatalog.panelOpen && (
               <section className="mt-3 space-y-2 rounded-xl border border-violet-500/30 bg-zinc-900/90 p-3 text-xs text-zinc-300" aria-label="จัดการคลังในเครื่อง">
                 <p className="font-semibold text-white">คลังเพลงในเครื่อง</p>
                 <p>เก็บเฉพาะข้อมูลชื่อเพลงและข้อมูลค้นหาในเบราว์เซอร์เครื่องนี้ ไม่ดาวน์โหลดเสียง วิดีโอ หรือรูปปก เพลงยังต้องใช้อินเทอร์เน็ตเพื่อเข้าคิวและเล่น</p>
@@ -1021,6 +1055,7 @@ export function PlayerSearchOverlay({
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-bold sm:text-base">{video.title}</span>
+                      <span className="mr-2 inline-block text-[10px] font-bold text-cyan-300">{getVideoVersion(video)==='mv'?'MV':'Karaoke'}</span>
                       <OfficialChannelBadge channelId={video.channel_id} />
                       <span className={`block truncate text-xs ${isSelected ? 'text-violet-100' : 'text-zinc-500'}`}>
                         {video.artist ?? video.channel_name} · {formatViewCount(video.views_count, video.last_synced_at)}
@@ -1132,6 +1167,7 @@ export function PlayerSearchOverlay({
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-bold sm:text-base">{item.video.title}</span>
+                        <span className="text-[10px] font-bold text-cyan-300">{getVideoVersion(item.video)==='mv'?'MV':'Karaoke'}</span>
                         <span className={`block truncate text-xs ${isSelected ? 'text-violet-100' : 'text-zinc-500'}`}>
                           {singerNames || item.requested_by} · {formatDuration(item.video.duration)}
                         </span>

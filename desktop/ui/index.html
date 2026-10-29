@@ -1,10 +1,12 @@
 <!doctype html><html lang="th"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'"><title>KARAOKE.HUB Desktop</title><link rel="stylesheet" href="style.css"></head>
 <body><header>
   <div class="brand"><strong>KARAOKE<span>.HUB</span></strong><small>WINDOWS PLAYER</small></div>
+  <div id="versions" class="control" role="group" aria-label="ประเภทเพลง"><button id="version-karaoke" aria-pressed="true">Karaoke</button><button id="version-mv" aria-pressed="false">MV / เพลงปกติ</button></div>
   <button id="audio" class="primary">เปิดระบบเสียง</button>
   <div class="control" role="group" aria-label="คีย์เพลง"><span>คีย์</span><button id="pitch-down" aria-label="ลดคีย์">−</button><output id="pitch">0</output><button id="pitch-up" aria-label="เพิ่มคีย์">+</button><small>semitones</small></div>
   <div class="control" role="group" aria-label="ความเร็วเพลง"><span>ความเร็ว</span><button id="tempo-down" aria-label="ลดความเร็ว">−</button><output id="rate">100%</output><button id="tempo-up" aria-label="เพิ่มความเร็ว">+</button></div>
   <button id="reset">คืนค่าเดิม</button>
+  <button id="vocal-remover" disabled title="ใช้ได้เฉพาะเพลง MV และระบบ AI ต้องพร้อม">Vocal Remover</button>
   <button id="reload" title="โหลด Player ใหม่">โหลดใหม่</button>
 </header><div class="status"><span id="indicator"></span><span id="status" role="status">กำลังเปิด Player…</span><span id="message" role="alert"></span><small>F11 เต็มจอ · Page Up/Down ความเร็ว · เสียงประมวลผลในเครื่อง</small></div>
 <script src="shell.js"></script></body></html>

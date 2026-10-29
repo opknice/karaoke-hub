@@ -1,10 +1,11 @@
 import { after, NextRequest, NextResponse } from 'next/server';
-import { searchKaraokeVideos, YouTubeSearchError } from '@/lib/youtube';
+import { searchKaraokeVideos, searchMusicVideos, YouTubeSearchError } from '@/lib/youtube';
+import { isVideoVersion } from '@/lib/video-version';
 import { getSearchBudget } from '@/lib/youtube-search-store';
 import { randomUUID } from 'node:crypto';
 import { saveCatalogVideos, searchCatalogWithRefresh } from '@/lib/youtube-catalog';
 import { isOfficialChannelTitleExcluded } from '@/lib/official-youtube-channels';
-import { writeSearchHistory } from '@/lib/youtube-search-store';
+import { writeSearchHistory, musicVideoSearchKey } from '@/lib/youtube-search-store';
 
 export const runtime = 'nodejs';
 
@@ -29,26 +30,28 @@ export async function POST(request: NextRequest) {
     }
     const source = typeof body === 'object' && body !== null && 'source' in body ? body.source : 'catalog';
     if (source !== 'catalog' && source !== 'youtube') return reply({ success: false, error: 'แหล่งค้นหาไม่ถูกต้อง' }, 400);
+    const version = typeof body === 'object' && body !== null && 'version' in body ? body.version : 'karaoke';
+    if (!isVideoVersion(version)) return reply({ success: false, error: 'ประเภทเพลงไม่ถูกต้อง' }, 400);
     const direct = /^(?:https?:\/\/|id:)/i.test(query.trim());
-    includeBudget = source === 'youtube' || direct;
-    if (source === 'catalog' && !direct) {
+    includeBudget = version === 'mv' || source === 'youtube' || direct;
+    if (version === 'karaoke' && source === 'catalog' && !direct) {
       const { videos, warning } = await searchCatalogWithRefresh(query);
-      return reply({ success: true, count: videos.length, data: videos, source, warning });
+      return reply({ success: true, count: videos.length, data: videos.map(video=>({...video,version_type:'karaoke'})), source, warning, version });
     }
-    const results = (await searchKaraokeVideos(query, client)).filter((video) => (
+    const results = version === 'mv' ? await searchMusicVideos(query, client) : (await searchKaraokeVideos(query, client)).filter((video) => (
       !isOfficialChannelTitleExcluded(video.channel_id, video.title)
-    ));
+    )).map(video=>({...video,version_type:'karaoke' as const}));
     // Keep these writes alive on Vercel without delaying usable search results.
     after(async () => {
       const writes = await Promise.allSettled([
-        saveCatalogVideos(results),
-        writeSearchHistory(query, results, direct ? 'video' : 'youtube'),
+        ...(version === 'karaoke' ? [saveCatalogVideos(results)] : []),
+        writeSearchHistory(version === 'mv' ? musicVideoSearchKey(query) : query, results, direct ? 'video' : 'youtube'),
       ]);
       for (const result of writes) {
         if (result.status === 'rejected') console.warn('Unable to persist search results:', result.reason);
       }
     });
-    return reply({ success: true, count: results.length, data: results, source: direct ? 'video' : 'youtube' });
+    return reply({ success: true, count: results.length, data: results, source: direct ? 'video' : 'youtube', version });
   } catch (error: unknown) {
     console.error('Error in /api/search:', error);
     const status = error instanceof YouTubeSearchError ? error.status : 500;

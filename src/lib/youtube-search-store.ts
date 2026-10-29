@@ -1,9 +1,19 @@
 import 'server-only';
+import { createHash } from 'node:crypto';
 import type { YouTubeVideo } from './types';
 import { isYouTubeVideo } from './youtube-video-validation';
 import { catalogRest } from './supabase/catalog-rest';
 
 const DAY_SECONDS = 86_400;
+
+function versionedSearchKey(query: string, version: 'karaoke' | 'mv'): string {
+  // Callers normalize text queries; video IDs must retain their original case.
+  const key = `${version === 'mv' ? 'mv:v2' : version}:${query}`;
+  return key.length <= 250 ? key : `${version}:sha256:${createHash('sha256').update(query).digest('hex')}`;
+}
+
+export const musicVideoSearchKey = (query: string): string => versionedSearchKey(query, 'mv');
+export const karaokeSearchKey = (query: string): string => versionedSearchKey(query, 'karaoke');
 
 export class SearchBudgetError extends Error {}
 

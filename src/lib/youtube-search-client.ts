@@ -1,4 +1,5 @@
-import type { YouTubeVideo } from './types';
+import type { YouTubeVideo, VideoVersion } from './types';
+import { getVideoVersion } from './video-version';
 import { isYouTubeVideo } from './youtube-video-validation';
 import { rankKaraokeVideos } from './youtube-ranking';
 import { SEED_KARAOKE_VIDEOS } from './karaoke-seed';
@@ -44,17 +45,18 @@ function hydrateCache(): void {
   } catch { /* Storage can be unavailable; server cache still works. */ }
 }
 
-export function getLocalSearchPreview(query: string): YouTubeVideo[] {
+export function getLocalSearchPreview(query: string, version: VideoVersion = 'karaoke'): YouTubeVideo[] {
   hydrateCache();
   if (!query.trim()) return [];
   const unique = new Map<string, YouTubeVideo>();
   for (const entry of clientSearchCache.values()) {
     if (entry.expiresAt <= Date.now()) continue;
-    for (const video of entry.results) unique.set(video.youtube_video_id, video);
+    for (const video of entry.results) if (getVideoVersion(video) === version) unique.set(video.youtube_video_id, video);
   }
-  for (const video of SEED_KARAOKE_VIDEOS) {
+  for (const video of version === 'karaoke' ? SEED_KARAOKE_VIDEOS : []) {
     if (!unique.has(video.youtube_video_id)) unique.set(video.youtube_video_id, { ...video, views_count: undefined });
   }
+  if (version === 'mv') return [...unique.values()].filter(video => video.title.toLocaleLowerCase('th-TH').includes(query.trim().toLocaleLowerCase('th-TH'))).slice(0,25);
   return rankKaraokeVideos([...unique.values()], query).slice(0, 25);
 }
 
@@ -99,7 +101,8 @@ function parseSearchResponse(payload: unknown): SearchResponse {
 export async function searchYouTubeKaraoke(
   query: string,
   signal?: AbortSignal,
-  source: 'catalog' | 'youtube' = 'catalog'
+  source: 'catalog' | 'youtube' = 'catalog',
+  version: VideoVersion = 'karaoke'
 ): Promise<YouTubeVideo[]> {
   signal?.throwIfAborted();
   hydrateCache();
@@ -107,10 +110,11 @@ export async function searchYouTubeKaraoke(
   // Video IDs are case-sensitive, including when embedded in a URL.
   const normalizedQuery = isDirectVideoQuery(trimmed)
     ? trimmed : trimmed.toLocaleLowerCase('th-TH');
-  const cacheKey = isDirectVideoQuery(normalizedQuery) ? normalizedQuery : `${source}:${normalizedQuery}`;
+  if (version === 'mv') source = 'youtube';
+  const cacheKey = `${version === 'mv' ? 'mv:' : ''}${isDirectVideoQuery(normalizedQuery) ? normalizedQuery : `${source}:${normalizedQuery}`}`;
   const cached = clientSearchCache.get(cacheKey);
   if (cached && Date.now() < cached.expiresAt) {
-    return isDirectVideoQuery(normalizedQuery) ? cached.results
+    return version === 'mv' || isDirectVideoQuery(normalizedQuery) ? cached.results
       : rankKaraokeVideos(cached.results, normalizedQuery, 'song', true);
   }
 
@@ -120,7 +124,7 @@ export async function searchYouTubeKaraoke(
     const entry: SharedSearchRequest = {
       controller,
       consumers: 0,
-      promise: fetchSearch(normalizedQuery, source, cacheKey, controller.signal),
+      promise: fetchSearch(normalizedQuery, source, cacheKey, controller.signal, version),
     };
     entry.promise = entry.promise.finally(() => {
       if (requests.get(cacheKey) === entry) requests.delete(cacheKey);
@@ -130,7 +134,7 @@ export async function searchYouTubeKaraoke(
   }
   const results = await waitForSearchRequest(cacheKey, pending, signal);
   signal?.throwIfAborted();
-  return isDirectVideoQuery(normalizedQuery) ? results
+  return version === 'mv' || isDirectVideoQuery(normalizedQuery) ? results
     : rankKaraokeVideos(results, normalizedQuery, 'song', true);
 }
 
@@ -175,8 +179,10 @@ export async function searchPlayerKaraoke(
   query: string,
   signal: AbortSignal,
   source: 'catalog' | 'youtube',
-  onFallback: () => void
+  onFallback: () => void,
+  version: VideoVersion = 'karaoke'
 ): Promise<{ videos: YouTubeVideo[]; source: 'catalog' | 'youtube' }> {
+  if (version === 'mv') return { videos: await searchYouTubeKaraoke(query, signal, 'youtube', version), source: 'youtube' };
   const videos = await searchYouTubeKaraoke(query, signal, source);
   if (source === 'youtube' || videos.length > 0 || isDirectVideoQuery(query)) {
     return { videos, source };
@@ -187,7 +193,7 @@ export async function searchPlayerKaraoke(
   return { videos: await searchYouTubeKaraoke(query, signal, 'youtube'), source: 'youtube' };
 }
 
-async function fetchSearch(normalizedQuery: string, source: 'catalog' | 'youtube', cacheKey: string, signal: AbortSignal): Promise<YouTubeVideo[]> {
+async function fetchSearch(normalizedQuery: string, source: 'catalog' | 'youtube', cacheKey: string, signal: AbortSignal, version: VideoVersion): Promise<YouTubeVideo[]> {
   const deadline = AbortSignal.timeout(SEARCH_REQUEST_TIMEOUT_MS);
   const requestSignal = AbortSignal.any([signal, deadline]);
   let response: Response;
@@ -195,7 +201,7 @@ async function fetchSearch(normalizedQuery: string, source: 'catalog' | 'youtube
   try {
     response = await fetch('/api/search', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: normalizedQuery, source }),
+      body: JSON.stringify({ query: normalizedQuery, source, version }),
       signal: requestSignal,
     });
     payload = await response.json();

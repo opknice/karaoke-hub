@@ -38,6 +38,12 @@ async function until(read,check,label,timeout=15000) {
     const page=await until(async()=>app.context().pages().find(p=>p.url()==='karaoke-app://app/ui/index.html'),Boolean,'Shell window');
     const state=()=>page.evaluate(()=>window.desktopPlayer.command('REQUEST_STATUS')).then(x=>x.state);
     await until(state,s=>s?.playerReady&&s.currentVideoId==='tone440aaaa','Player ready');
+    await page.locator('#version-mv').click();
+    await until(state,s=>s.searchVersion==='mv','MV search selection');
+    assert.equal((await state()).currentVersionType,'karaoke');
+    assert.equal(await page.locator('#vocal-remover').isDisabled(),true);
+    await page.locator('#version-karaoke').click();
+    await until(state,s=>s.searchVersion==='karaoke','Karaoke search selection');
     assert.equal(await page.getByRole('button',{name:'Vocal Cut',exact:true}).count(),0);
     assert.equal(await page.getByRole('button',{name:'Auto Level',exact:true}).count(),0);
     const remote=await until(async()=>app.context().pages().find(p=>p.url().startsWith(`http://127.0.0.1:${port}/player`)),Boolean,'Player view');

@@ -131,7 +131,7 @@ test('persistent cache, explicit search budget, concurrency and URL handling', a
     assert.equal((await restarted('src/lib/youtube-search-store.ts').getSearchBudget()).used, 1);
 
     // Expire details without expiring the search: refresh statistics only.
-    cache.get('ขอบฟ้า').updatedAt = Date.now() - 3_600_001;
+    cache.get(store.karaokeSearchKey('ขอบฟ้า')).updatedAt = Date.now() - 3_600_001;
     const refreshed = loader();
     await refreshed('src/lib/youtube.ts').searchKaraokeVideos('ขอบฟ้า', 'client-d');
     assert.equal(searches, 1);

@@ -22,7 +22,10 @@ function validateCommand(type, payload = {}) {
     case 'SET_PITCH': return Number.isInteger(payload.semitones) && payload.semitones >= -6 && payload.semitones <= 6;
     case 'SET_PLAYBACK_RATE': return Number.isFinite(payload.playbackRate) && payload.playbackRate >= 0.25 && payload.playbackRate <= 2;
     case 'SET_PLAYER_VOLUME': return Number.isFinite(payload.volume) && payload.volume >= 0 && payload.volume <= 100 && typeof payload.muted === 'boolean';
-    case 'TRACK_CHANGED': return payload.youtubeVideoId === null || (typeof payload.youtubeVideoId === 'string' && /^[\w-]{11}$/.test(payload.youtubeVideoId));
+    case 'SET_SEARCH_VERSION': return payload.version === 'karaoke' || payload.version === 'mv';
+    case 'TRACK_CHANGED': return (payload.youtubeVideoId === null || (typeof payload.youtubeVideoId === 'string' && /^[\w-]{11}$/.test(payload.youtubeVideoId)))
+      && (payload.versionType === undefined || payload.versionType === 'karaoke' || payload.versionType === 'mv')
+      && (payload.queueItemId === undefined || payload.queueItemId === null || (typeof payload.queueItemId === 'string' && payload.queueItemId.length > 0 && payload.queueItemId.length <= 128));
     default: return false;
   }
 }

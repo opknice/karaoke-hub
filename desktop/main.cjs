@@ -95,7 +95,7 @@ app.whenReady().then(async()=>{
   ipcMain.handle('player-command',(event,message)=>{
     if(!validSender(event,player.webContents,url=>isPlayerUrl(url,playerUrl))) return {ok:false,error:'Untrusted Player'};
     // Only the existing web bridge commands are accepted from remote content.
-    if(!['PLAYER_HELLO','REQUEST_STATUS','TRACK_CHANGED','SET_PLAYBACK_RATE','SET_PLAYER_VOLUME','TEMPO_UP','TEMPO_DOWN'].includes(message?.type)) return {ok:false,error:'Unsupported Player command'};
+    if(!['PLAYER_HELLO','REQUEST_STATUS','TRACK_CHANGED','SET_PLAYBACK_RATE','SET_PLAYER_VOLUME','TEMPO_UP','TEMPO_DOWN','SET_SEARCH_VERSION'].includes(message?.type)) return {ok:false,error:'Unsupported Player command'};
     if(message.type==='PLAYER_HELLO') controller.update({playerReady:true,playerError:null});
     return controller.command(message.type,message.payload);
   });

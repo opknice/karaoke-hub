@@ -1,5 +1,11 @@
 # Desktop releases
 
+## 0.1.3 — 2026-10-29
+
+Added the top-left Karaoke / MV selector in Electron and the browser Player. Karaoke retains catalog-first search. MV uses a separate music-video search and cache, excludes known karaoke/backing-track titles, and never saves results into the Karaoke catalog. Cache keys preserve video-ID case and fit the existing database limits.
+
+Queue metadata retains the selected video's version. Changing the search mode back to Karaoke leaves the playing MV and captured audio running. Vocal Remover eligibility follows the playing queue item until it ends; it does not follow the search selector. Actual AI source separation is not implemented: the Vocal Remover button remains disabled and readiness remains false pending the quality and <=5 second latency gate. Key and one-percent tempo controls remain.
+
 ## 0.1.2 — 2026-10-29
 
 Tempo +/- and Page Up/Down now change by one percentage point per operation. The toolbar displays percentages (normal = 100%); 125% increases to 126% or decreases to 124%. Existing 25%–200% limits remain, and reset returns directly to 100% without restarting the song.

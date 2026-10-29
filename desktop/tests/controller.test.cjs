@@ -160,3 +160,20 @@ test('a late native tempo acknowledgement cannot change a stopped session', asyn
   assert.equal(controller.state.playbackRate,1);
   assert.equal(controller.state.captureStatus,'installed_idle');
 });
+test('search version changes leave the playing MV and audio untouched until its queue item ends', async () => {
+  const {controller,audio}=setup();
+  await controller.command('START_AUDIO');
+  await controller.command('TRACK_CHANGED',{youtubeVideoId:'abcdefghijk',queueItemId:'mv-item',versionType:'mv'});
+  assert.equal(controller.state.vocalRemoverEligible,true);
+  audio.length=0;
+  await controller.command('SET_SEARCH_VERSION',{version:'karaoke'});
+  assert.equal(controller.state.currentQueueItemId,'mv-item');
+  assert.equal(controller.state.currentVersionType,'mv');
+  assert.equal(controller.state.captureStatus,'capturing_original');
+  assert.equal(controller.state.vocalRemoverEligible,true);
+  assert.equal(audio.length,0);
+  await controller.command('TRACK_CHANGED',{youtubeVideoId:'12345678901',queueItemId:'karaoke-item',versionType:'karaoke'});
+  assert.equal(controller.state.vocalRemoverEligible,false);
+  assert.equal(controller.state.currentVersionType,'karaoke');
+  assert.equal((await controller.command('SET_SEARCH_VERSION',{version:'anything'})).ok,false);
+});

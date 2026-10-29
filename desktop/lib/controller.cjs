@@ -7,6 +7,8 @@ function initialState() {
     supportsLoudnessNormalize: false, supportsPitchPreservedTempo: false,
     playbackRate: 1, pitchSemitones: 0,
     playerVolume: 85, playerMuted: false, lastError: null, currentVideoId: null,
+    searchVersion: 'karaoke', currentVersionType: 'karaoke', currentQueueItemId: null,
+    vocalRemoverEligible: false, vocalRemoverReady: false,
     inputRms: 0, outputRms: 0, peakHz: 0,
   };
 }
@@ -71,6 +73,7 @@ class DesktopAudioController {
   async apply(type, payload) {
     switch (type) {
       case 'PLAYER_HELLO': case 'REQUEST_STATUS': return;
+      case 'SET_SEARCH_VERSION': this.update({ searchVersion: payload.version }); return;
       case 'START_AUDIO': {
         if (this.active) return;
         const generation = ++this.generation;
@@ -84,13 +87,17 @@ class DesktopAudioController {
         await this.sourceRate(1, true).catch(() => {});
         await this.audio('STOP_AUDIO'); return;
       case 'TRACK_CHANGED': {
-        if (payload.youtubeVideoId === this.state.currentVideoId) return;
+        const queueItemId = payload.queueItemId ?? null;
+        const versionType = payload.youtubeVideoId && payload.versionType === 'mv' ? 'mv' : 'karaoke';
+        if (payload.youtubeVideoId === this.state.currentVideoId && queueItemId === this.state.currentQueueItemId && versionType === this.state.currentVersionType) return;
         if (this.active) {
           await this.audio('RESET_TRACK');
           // A source may still be loading; its normal load also defaults to 1x.
           await this.sourceRate(1).catch(() => {});
         }
-        this.update({ currentVideoId: payload.youtubeVideoId, pitchSemitones: 0, playbackRate: 1,
+        this.update({ currentVideoId: payload.youtubeVideoId, currentQueueItemId: queueItemId,
+          currentVersionType: versionType, vocalRemoverEligible: Boolean(payload.youtubeVideoId && versionType === 'mv'),
+          pitchSemitones: 0, playbackRate: 1,
           enabled: false, captureStatus: this.active ? 'capturing_original' : this.state.captureStatus });
         return;
       }

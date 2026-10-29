@@ -2,6 +2,7 @@ export type QueueStatus = 'pending' | 'queued' | 'playing' | 'completed' | 'skip
 export type QueueMode = 'fifo' | 'round_robin' | 'smart';
 export type RequestMode = 'auto_accept' | 'host_approval';
 export type MemberRole = 'host' | 'guest';
+export type VideoVersion = 'karaoke' | 'mv';
 
 export interface User {
   id: string;
@@ -21,6 +22,7 @@ export interface Song {
 }
 
 export interface YouTubeVideo {
+  version_type?: VideoVersion;
   id: string;
   youtube_video_id: string;
   song_id?: string;

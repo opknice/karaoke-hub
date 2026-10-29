@@ -223,7 +223,7 @@ export async function getPopularCatalogPage(offset: number, channelId: string): 
 }
 
 export async function saveCatalogVideos(videos: readonly YouTubeVideo[]): Promise<void> {
-  const rows = videos.filter((video) => !isCatalogTitleExcluded(video)).flatMap((video) => {
+  const rows = videos.filter((video) => video.version_type !== 'mv' && !isCatalogTitleExcluded(video)).flatMap((video) => {
     const refreshed = Date.parse(video.last_synced_at ?? '');
     if (!video.channel_id || !Number.isFinite(refreshed) || Date.now() - refreshed >= 29 * DAY) return [];
     return [{ video_id: video.youtube_video_id, channel_id: video.channel_id,

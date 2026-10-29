@@ -1,0 +1,9 @@
+desktop/
+browser-extension/
+docs/
+tests/
+build/
+.superpowers/
+.*.log
+.env*
+.next/
