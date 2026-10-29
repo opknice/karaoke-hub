@@ -2,18 +2,28 @@ const {app,BrowserWindow,WebContentsView,Menu,protocol,net,session,ipcMain,shell
 const path=require('node:path');
 const {pathToFileURL}=require('node:url');
 const {DesktopAudioController}=require('./lib/controller.cjs');
-const {resolvePlayerUrl,isPlayerUrl}=require('./lib/policy.cjs');
+const {resolvePlayerUrl,isPlayerUrl,validateCommand}=require('./lib/policy.cjs');
 const {setMediaPlaybackRate}=require('./lib/media-tempo.cjs');
+const {VocalWorker}=require('./lib/vocal-worker.cjs');
+const {VocalVideo}=require('./lib/vocal-video.cjs');
+const {LiveVocalCoordinator}=require('./lib/vocal-coordinator.cjs');
 
 protocol.registerSchemesAsPrivileged([{scheme:'karaoke-app',privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true,stream:true}}]);
 app.commandLine.appendSwitch('autoplay-policy','no-user-gesture-required');
 if(process.env.KARAOKE_USER_DATA) app.setPath('userData',path.resolve(process.env.KARAOKE_USER_DATA));
-let window,player,audioWindow,controller,hostReady;
+let window,player,audioWindow,controller,hostReady,vocalWorker,vocal;
 let nextId=0;
 const audioRequests=new Map();
 const playerUrl=resolvePlayerUrl(process.env.KARAOKE_PLAYER_URL);
 const localOrigin='karaoke-app://app';
 const isLocal=(url,entry)=>url===`${localOrigin}/${entry}`;
+function vocalRuntimeError(message){
+  if(/too slow|five-second/i.test(message))return 'GPU เครื่องนี้ประมวลผลไม่ทันเงื่อนไข 5 วินาที';
+  if(/No hardware GPU/i.test(message))return 'ไม่พบ GPU ที่รองรับ Vocal Remover';
+  if(/integrity|tensor shape|model interface/i.test(message))return 'ไฟล์โมเดล AI ไม่สมบูรณ์ กรุณาติดตั้งโปรแกรมใหม่';
+  if(/DirectML|No module|runtime/i.test(message))return 'เริ่มระบบ AI บน GPU ไม่สำเร็จ กรุณาลองเปิดโปรแกรมใหม่';
+  return message;
+}
 
 function validSender(event,contents,check) {
   return contents&&!contents.isDestroyed()&&event.sender===contents&&event.senderFrame===contents.mainFrame&&check(event.senderFrame.url);
@@ -97,11 +107,36 @@ app.whenReady().then(async()=>{
   restrictNavigation(window.webContents,url=>isLocal(url,'ui/index.html'));
   restrictNavigation(audioWindow.webContents,url=>isLocal(url,'audio/index.html'));
   restrictNavigation(player.webContents,url=>isPlayerUrl(url,playerUrl));
-  controller=new DesktopAudioController({sendAudio,setPlaybackRate:rate=>setMediaPlaybackRate(player.webContents,playerUrl,rate),publish});
+  controller=new DesktopAudioController({sendAudio,setPlaybackRate:rate=>setMediaPlaybackRate(player.webContents,playerUrl,rate),publish,
+    setVocal:(enabled,options)=>enabled?vocal.start():vocal.stop(options)});
+  const vocalRoot=app.isPackaged?path.join(process.resourcesPath,'vocal'):path.join(__dirname,'vocal');
+  vocalWorker=new VocalWorker({paths:{python:path.join(vocalRoot,'runtime/python/python.exe'),worker:path.join(vocalRoot,'worker.py'),model:path.join(vocalRoot,'runtime/UVR_MDXNET_Main.onnx')},
+    onReady:details=>controller.update({vocalRemoverReady:true,vocalRuntimeStatus:'ready',vocalRuntimeError:null,vocalRemoverError:null,vocalRuntimeDevice:details.name,vocalRuntimeDenoise:details.denoise,vocalRemoverStatus:controller.state.vocalRemoverEnabled?controller.state.vocalRemoverStatus:'ready'}),
+    onResult:packet=>vocal.result(packet),
+    onFailure:failure=>{
+      if(failure.fatal){console.warn('Vocal runtime:',failure.message);controller.update({vocalRemoverReady:false,vocalRuntimeStatus:'error',vocalRuntimeError:vocalRuntimeError(failure.message)});}
+      if(vocal.enabled)void vocal.failure(failure.message,failure.epoch);
+    },
+  });
+  vocal=new LiveVocalCoordinator({worker:vocalWorker,video:new VocalVideo(player.webContents,playerUrl),
+    getTrack:()=>({videoId:controller.state.currentVideoId,queueItemId:controller.state.currentQueueItemId,versionType:controller.state.currentVersionType,active:controller.active,origin:new URL(playerUrl).origin}),
+    sendAudio:(type,payload)=>controller.audio(type,payload),
+    sendResult:packet=>{if(!audioWindow.webContents.isDestroyed())audioWindow.webContents.send('vocal-result',packet);},
+    publish:patch=>controller.update(patch),
+    setBridge:configuration=>{if(!player.webContents.isDestroyed()&&isPlayerUrl(player.webContents.getURL(),playerUrl))player.webContents.send('vocal-bridge',configuration);},
+  });
+  controller.update({vocalRuntimeStatus:'loading'});
   ipcMain.handle('player-command',(event,message)=>{
     if(!validSender(event,player.webContents,url=>isPlayerUrl(url,playerUrl))) return {ok:false,error:'Untrusted Player'};
     // Only the existing web bridge commands are accepted from remote content.
-    if(!['PLAYER_HELLO','REQUEST_STATUS','TRACK_CHANGED','SET_PLAYBACK_RATE','SET_PLAYER_VOLUME','TEMPO_UP','TEMPO_DOWN','SET_SEARCH_VERSION'].includes(message?.type)) return {ok:false,error:'Unsupported Player command'};
+    if(!['PLAYER_HELLO','REQUEST_STATUS','TRACK_CHANGED','SET_PLAYBACK_RATE','SET_PLAYER_VOLUME','TEMPO_UP','TEMPO_DOWN','SET_SEARCH_VERSION','VOCAL_PLAYBACK_STATE'].includes(message?.type)) return {ok:false,error:'Unsupported Player command'};
+    if(message.type==='VOCAL_PLAYBACK_STATE'){
+      if(!validateCommand(message.type,message.payload))return {ok:false,error:'Invalid playback state'};
+      const p=message.payload;
+      if(vocal.enabled&&p.youtubeVideoId===controller.state.currentVideoId&&p.queueItemId===controller.state.currentQueueItemId)
+        void vocal.transport({epoch:vocal.epoch,token:vocal.token,kind:p.playing?'play':'pause',paused:!p.playing});
+      return {ok:true,state:controller.state};
+    }
     if(message.type==='PLAYER_HELLO') controller.update({playerReady:true,playerError:null});
     return controller.command(message.type,message.payload);
   });
@@ -109,7 +144,7 @@ app.whenReady().then(async()=>{
     if(!validSender(event,window.webContents,url=>isLocal(url,'ui/index.html'))) return {ok:false,error:'Untrusted shell'};
     if(message?.type!=='REQUEST_STATUS') restorePlayerSearchFocus();
     try {
-      if(message?.type==='RELOAD_PLAYER') {await controller.disconnect();await player.webContents.loadURL(playerUrl).catch(()=>{});return {ok:true,state:controller.state};}
+      if(message?.type==='RELOAD_PLAYER') {await controller.disconnect();if(!vocalWorker.ready){controller.update({vocalRuntimeStatus:'loading',vocalRuntimeError:null});vocalWorker.start();}await player.webContents.loadURL(playerUrl).catch(()=>{});return {ok:true,state:controller.state};}
       return await controller.command(message?.type,message?.payload);
     } finally {
       if(message?.type!=='REQUEST_STATUS') restorePlayerSearchFocus();
@@ -119,7 +154,17 @@ app.whenReady().then(async()=>{
     if(validSender(event,audioWindow.webContents,url=>isLocal(url,'audio/index.html'))) settle(audioRequests,id,result);
   });
   ipcMain.on('audio-event',(event,{patch,generation}={})=>{
-    if(validSender(event,audioWindow.webContents,url=>isLocal(url,'audio/index.html'))&&patch&&typeof patch==='object') controller.audioEvent(patch,generation);
+    if(validSender(event,audioWindow.webContents,url=>isLocal(url,'audio/index.html'))&&patch&&typeof patch==='object') {
+      if(patch.vocalEpoch!==undefined){if(generation===controller.generation)vocal.audioState(patch);}
+      else controller.audioEvent(patch,generation);
+    }
+  });
+  ipcMain.on('vocal-pcm',(event,packet)=>{if(validSender(event,audioWindow.webContents,url=>isLocal(url,'audio/index.html'))&&packet&&typeof packet==='object')vocal.feed(packet);});
+  ipcMain.on('vocal-transport',(event,packet)=>{
+    if(!validSender(event,player.webContents,url=>isPlayerUrl(url,playerUrl))||!packet||typeof packet!=='object')return;
+    if(!['play','pause','seeking','seeked','ended','error'].includes(packet.kind)||typeof packet.token!=='string'||packet.token.length>128
+      ||!Number.isSafeInteger(packet.epoch)||typeof packet.paused!=='boolean'||!Number.isFinite(packet.time)||packet.time<0)return;
+    void vocal.transport(packet);
   });
   player.webContents.on('did-start-navigation',(_event,_url,_inPlace,isMainFrame)=>{if(isMainFrame){void controller.disconnect();controller.update({currentVideoId:null,playerReady:false});}});
   player.webContents.on('did-finish-load',()=>controller.update({playerReady:true,playerError:null}));
@@ -129,11 +174,13 @@ app.whenReady().then(async()=>{
   player.webContents.on('render-process-gone',()=>{void controller.disconnect();controller.update({playerReady:false,playerError:'Player หยุดทำงาน กดโหลดใหม่'});});
   audioWindow.webContents.on('render-process-gone',()=>{
     rejectPending(audioRequests,'ระบบเสียงหยุดทำงาน');controller.generation++;controller.deactivate('error','ระบบเสียงหยุดทำงาน กรุณาเปิดใหม่');
+    void controller.revokeVocal();
     hostReady=audioWindow.loadURL(`${localOrigin}/audio/index.html`);
   });
   hostReady=audioWindow.loadURL(`${localOrigin}/audio/index.html`);
   await window.loadURL(`${localOrigin}/ui/index.html`);
   await hostReady;
+  vocalWorker.start();
   void player.webContents.loadURL(playerUrl).catch(()=>{});
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {label:'KARAOKE.HUB',submenu:[{label:'โหลด Player ใหม่',click:()=>{void controller.disconnect().then(()=>player.webContents.reload());}},{role:'quit',label:'ออก'}]},
@@ -142,4 +189,4 @@ app.whenReady().then(async()=>{
   window.on('closed',()=>{player.webContents.close();audioWindow.destroy();app.quit();});
 }).catch(error=>{console.error(error);app.exit(1);});
 app.on('window-all-closed',()=>app.quit());
-app.on('before-quit',()=>{rejectPending(audioRequests,'App closed');});
+app.on('before-quit',()=>{void vocal?.stop({restorePosition:false});vocalWorker?.stop();rejectPending(audioRequests,'App closed');});

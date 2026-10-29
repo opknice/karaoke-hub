@@ -31,3 +31,16 @@ Use the actual packaged app against the compatible hosted Player. Verify total a
 - Streaming DSP and GPU worker implemented under desktop/vocal, not yet connected to the released UI. Seven Python tests passed: stereo/time mapping, overlap continuity, reset, finite-data validation, denoise bias removal, adapter preference, packet validation and model integrity (some test methods cover multiple checks).
 - Actual worker smoke passed with the verified model, selected NVIDIA GPU, denoise enabled: two-pass warm 722 ms; full rolling transforms + inference approximately 805–830 ms per emitted second. No end-to-end or sound-quality claim yet.
 - Raw VideoFrame creation and canvas drawing succeeded inside the actual YouTube embed. Use a bounded VideoFrame/canvas delay overlay; no WebRTC or new media service is required.
+
+## Integrated acceptance
+
+- Actual Electron/YouTube MV processing passed: first processed output 4708–4713 ms, video delay 4510–4543 ms on Windows 11 build 26300 / GTX 1650 Ti. A 90-second run retained on status across 179 samples.
+- Expanded tests passed pause, seek while paused, resume, search back to Karaoke, key/tempo/reset, original-position restoration and the delayed end tail. Private transport packets and estimates use generation/epoch guards.
+- Video buffering uses raw VideoFrame/canvas, capped at 720p/30 fps and 512 MiB; no WebRTC is required. Portable runtime smoke passed without developer Python paths.
+- A paired music excerpt was exported locally for diagnostics. Output is finite and non-silent, with no clipping in the measured excerpt; timing correlation is not a separation quality score. Human full-mix listening and Windows 10/device acceptance remain unverified.
+- Release gate remaining: fresh full suites, independent review, installer resource/runtime tests and packaged production acceptance.
+
+## Review and packaged local validation
+
+- Fresh independent read-only review found one Important issue: an ENDED tail timer could advance after same-item restart/seek/PLAYING. Three real component regressions failed before cancellation was added to each transport entry point, then all three passed. An actual packaged MV integration additionally seeks back during the delayed tail and verifies the old timer does not advance.
+- Installer 0.1.5 built successfully (unsigned). Packaged Python/DirectML/model runtime smoke passed from resources/vocal, with denoise active. Packaged Electron against local Player passed expanded live AI/pause/paused-seek/tail-restart/end tests, initial output 4713 ms and video 4524 ms. Toolbar fits both 1440px and 960px while AI is on.

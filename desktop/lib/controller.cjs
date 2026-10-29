@@ -9,12 +9,14 @@ function initialState() {
     playerVolume: 85, playerMuted: false, lastError: null, currentVideoId: null,
     searchVersion: 'karaoke', currentVersionType: 'karaoke', currentQueueItemId: null,
     vocalRemoverEligible: false, vocalRemoverReady: false,
+    vocalRemoverEnabled:false,vocalRemoverStatus:'unavailable',vocalRemoverError:null,
     inputRms: 0, outputRms: 0, peakHz: 0,
   };
 }
 class DesktopAudioController {
-  constructor({ sendAudio, setPlaybackRate, publish, timeoutMs = 10000 }) {
+  constructor({ sendAudio, setPlaybackRate, publish, setVocal=async enabled=>{if(enabled)throw new Error('ระบบ AI ยังไม่พร้อม');}, timeoutMs = 10000 }) {
     this.sendAudio = sendAudio; this.setPlaybackRate = setPlaybackRate; this.publish = publish;
+    this.setVocal=setVocal;
     this.timeoutMs = timeoutMs; this.state = initialState(); this.generation = 0;
     this.queue = Promise.resolve();
   }
@@ -34,23 +36,29 @@ class DesktopAudioController {
   }
   deactivate(status, lastError = null) {
     this.update({ captureStatus: status, lastError, enabled: false, supportsLoudnessNormalize: false,
-      supportsPitchPreservedTempo: false, pitchSemitones: 0, playbackRate: 1, inputRms: 0, outputRms: 0 });
+      supportsPitchPreservedTempo: false, pitchSemitones: 0, playbackRate: 1, inputRms: 0, outputRms: 0,
+      vocalRemoverEnabled:false,vocalRemoverStatus:this.state.vocalRemoverReady?'ready':'unavailable' });
+  }
+  revokeVocal(options={}) {
+    try{this.vocalStopping=Promise.resolve(this.setVocal(false,options)).catch(()=>{});}catch{this.vocalStopping=Promise.resolve();}
+    return this.vocalStopping;
   }
   audioEvent(patch, generation) {
     if (generation !== this.generation) return;
     if (patch.captureStatus === 'error' || patch.captureStatus === 'installed_idle') {
       this.generation++;
       this.deactivate(patch.captureStatus, patch.lastError);
+      void this.revokeVocal();
       void this.audio('STOP_AUDIO').catch(() => {});
       return;
     }
-    if (this.active) this.update(patch);
+    if (this.active && patch.vocalEpoch===undefined) this.update(patch);
   }
   async disconnect() { return this.command('STOP_AUDIO'); }
   command(type, payload = {}) {
     if (!validateCommand(type, payload)) return Promise.resolve({ ok: false, error: 'คำสั่งหรือค่าที่ส่งมาไม่ถูกต้อง', state: this.state });
     // Revoke synchronously, before an in-flight start or IPC reply can arrive.
-    if (type === 'STOP_AUDIO') { this.generation++; this.deactivate('installed_idle'); }
+    if (type === 'STOP_AUDIO') { this.generation++; this.deactivate('installed_idle');void this.revokeVocal(); }
     const scheduledGeneration = this.generation;
     const job = async () => {
       try {
@@ -74,6 +82,15 @@ class DesktopAudioController {
     switch (type) {
       case 'PLAYER_HELLO': case 'REQUEST_STATUS': return;
       case 'SET_SEARCH_VERSION': this.update({ searchVersion: payload.version }); return;
+      case 'SET_VOCAL_REMOVER':
+        if(payload.enabled&&this.state.vocalRemoverEnabled)return;
+        if(payload.enabled){
+          if(!this.state.vocalRemoverReady)throw new Error(this.state.vocalRuntimeError||'ระบบ AI ยังไม่พร้อมใช้งาน');
+          if(!this.active)throw new Error('เปิดระบบเสียงก่อนใช้ Vocal Remover');
+          if(!this.state.vocalRemoverEligible||!this.state.currentQueueItemId)throw new Error('Vocal Remover ใช้ได้เฉพาะเพลง MV ที่กำลังเล่น');
+        }
+        await this.setVocal(payload.enabled,{restorePosition:true});
+        this.update({vocalRemoverEnabled:payload.enabled,vocalRemoverStatus:payload.enabled?'preparing':this.state.vocalRemoverReady?'ready':'unavailable',vocalRemoverError:null});return;
       case 'START_AUDIO': {
         if (this.active) return;
         const generation = ++this.generation;
@@ -84,12 +101,14 @@ class DesktopAudioController {
         return;
       }
       case 'STOP_AUDIO':
+        await this.vocalStopping;
         await this.sourceRate(1, true).catch(() => {});
         await this.audio('STOP_AUDIO'); return;
       case 'TRACK_CHANGED': {
         const queueItemId = payload.queueItemId ?? null;
         const versionType = payload.youtubeVideoId && payload.versionType === 'mv' ? 'mv' : 'karaoke';
         if (payload.youtubeVideoId === this.state.currentVideoId && queueItemId === this.state.currentQueueItemId && versionType === this.state.currentVersionType) return;
+        await this.revokeVocal({restorePosition:false});
         if (this.active) {
           await this.audio('RESET_TRACK');
           // A source may still be loading; its normal load also defaults to 1x.
@@ -97,6 +116,7 @@ class DesktopAudioController {
         }
         this.update({ currentVideoId: payload.youtubeVideoId, currentQueueItemId: queueItemId,
           currentVersionType: versionType, vocalRemoverEligible: Boolean(payload.youtubeVideoId && versionType === 'mv'),
+          vocalRemoverEnabled:false,vocalRemoverStatus:this.state.vocalRemoverReady?'ready':'unavailable',vocalRemoverError:null,
           pitchSemitones: 0, playbackRate: 1,
           enabled: false, captureStatus: this.active ? 'capturing_original' : this.state.captureStatus });
         return;

@@ -14,6 +14,7 @@ import {
 import { useKaraoke } from '@/context/KaraokeContext';
 import { useVocalCutExtension } from '@/hooks/useVocalCutExtension';
 import { getVideoVersion } from '@/lib/video-version';
+import { getVocalPlaybackDelay } from '@/lib/vocal-playback';
 
 export default function PlayerPage() {
   const { activeRoom, ensureActiveRoom, nowPlaying, volume, isMuted, roomSyncError, refreshRoomQueue } = useKaraoke();
@@ -304,6 +305,7 @@ export default function PlayerPage() {
             isDisplayMode
             disableVideoInteraction={isQueueBrowserActive}
             tempoExtensionReady={tempoExtensionReady}
+            nativeVocalDelayMs={getVocalPlaybackDelay(vocalCut.state,nowPlaying?.id??null)}
             onTempoRateChange={handleTempoRateChange}
           />
         </div>

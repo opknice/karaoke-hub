@@ -34,6 +34,10 @@ export interface VocalCutPreference {
 }
 
 export interface VocalCutExtensionState {
+  vocalRemoverEnabled?: boolean;
+  vocalRemoverDelayMs?: number;
+  currentQueueItemId?: string | null;
+  currentVersionType?: string;
   captureStatus: VocalCutCaptureStatus;
   enabled: boolean;
   monoLike: boolean;

@@ -1,0 +1,6 @@
+{
+  "pythonBase": "C:/Python312",
+  "packages": "C:/path/to/verified-uvr-venv/Lib/site-packages",
+  "directml": "C:/path/to/onnxruntime-directml-1.24.4/site-packages",
+  "model": "C:/path/to/UVR_MDXNET_Main.onnx"
+}

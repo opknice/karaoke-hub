@@ -1,20 +1,21 @@
 {
   "name": "karaoke-hub-desktop",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "KARAOKE.HUB Windows Player with local key and tempo controls",
   "author": "KARAOKE.HUB",
   "main": "main.cjs",
   "scripts": {
     "prepare:assets": "node scripts/prepare-assets.cjs",
+    "prepare:vocal": "node scripts/prepare-vocal.cjs",
     "start": "npm run prepare:assets && electron .",
     "pretest": "npm run prepare:assets",
     "test": "node --test tests/*.test.cjs tests/*.test.mjs",
     "test:electron": "node tests/electron-smoke.cjs",
     "test:hosted": "node tests/hosted-smoke.cjs",
     "pretest:electron": "npm run prepare:assets",
-    "pack": "npm run prepare:assets && electron-builder --win --x64 --dir",
-    "dist": "npm run prepare:assets && electron-builder --win nsis --x64"
+    "pack": "npm run prepare:assets && npm run prepare:vocal && electron-builder --win --x64 --dir",
+    "dist": "npm run prepare:assets && npm run prepare:vocal && electron-builder --win nsis --x64"
   },
   "devDependencies": {
     "electron": "45.1.0",
@@ -36,6 +37,17 @@
       "audio/**/*",
       "package.json",
       "!**/*.map"
+    ],
+    "extraResources": [
+      {
+        "from": "vocal",
+        "to": "vocal",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc"
+        ]
+      }
     ],
     "win": {
       "target": "nsis",

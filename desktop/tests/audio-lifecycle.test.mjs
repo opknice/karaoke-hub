@@ -39,3 +39,42 @@ test('an old track-ended close cannot report idle after a new capture starts', a
     globalThis.AudioContext=originalContext;globalThis.AudioWorkletNode=originalWorklet;
   }
 });
+
+test('live vocal audio schedules a common clock, feeds only current epoch PCM and clears on track reset',async()=>{
+  const descriptor=Object.getOwnPropertyDescriptor(globalThis,'navigator');
+  const savedContext=globalThis.AudioContext,savedWorklet=globalThis.AudioWorkletNode;
+  const worklets=[],fed=[],events=[];
+  class Node {
+    constructor(_context,name){this.name=name;this.messages=[];this.port={postMessage:message=>this.messages.push(message)};if(name)worklets.push(this);}
+    connect(node){return node;}disconnect(){}
+  }
+  class Context {
+    constructor(){this.audioWorklet={addModule:async()=>{}};this.destination=new Node();this.currentTime=1;this.sampleRate=44100;}
+    createMediaStreamSource(){return new Node();}createAnalyser(){return new Node();}async resume(){}async close(){}
+  }
+  Object.defineProperty(globalThis,'navigator',{configurable:true,value:{mediaDevices:{getDisplayMedia:async()=>{
+    const tracks=[{stop(){}}];return{getTracks:()=>tracks,getAudioTracks:()=>tracks};
+  }}}});globalThis.AudioContext=Context;globalThis.AudioWorkletNode=Node;
+  const engine=new AudioEngine((patch,generation)=>events.push({patch,generation}),{feedVocal:packet=>fed.push(packet)});
+  try{
+    await engine.apply('START_AUDIO',{},1);
+    await engine.apply('START_VOCAL',{epoch:4,startWallMs:Date.now()+200},1);
+    const vocal=worklets.find(node=>node.name==='desktop-vocal');
+    assert.equal(vocal.messages.at(-1).type,'ENABLE');assert.equal(vocal.messages.at(-1).epoch,4);
+    assert.ok(vocal.messages.at(-1).startFrame>=44100&&vocal.messages.at(-1).startFrame<=57330);
+    vocal.port.onmessage({data:{type:'pcm',epoch:3,sequence:0,pcm:new Float32Array(88200)}});
+    vocal.port.onmessage({data:{type:'pcm',epoch:4,sequence:0,pcm:new Float32Array(88200)}});
+    assert.equal(fed.length,1);
+    await engine.apply('VOCAL_RESULT',{type:'result',epoch:4,startFrame:0,pcm:new Float32Array(2)},1);
+    assert.equal(vocal.messages.at(-1).type,'RESULT','Worker packet names cannot override the audio worklet command');
+    vocal.port.onmessage({data:{type:'vocal-state',epoch:4,status:'on',delayFrames:198450}});
+    assert.equal(events.at(-1).patch.vocalRemoverStatus,'on');
+    await engine.apply('RESET_TRACK',{},1);
+    assert.equal(vocal.messages.at(-1).type,'DISABLE');
+    vocal.port.onmessage({data:{type:'pcm',epoch:4,sequence:1,pcm:new Float32Array(88200)}});
+    assert.equal(fed.length,1);
+  }finally{
+    await engine.stop();if(descriptor)Object.defineProperty(globalThis,'navigator',descriptor);else delete globalThis.navigator;
+    globalThis.AudioContext=savedContext;globalThis.AudioWorkletNode=savedWorklet;
+  }
+});

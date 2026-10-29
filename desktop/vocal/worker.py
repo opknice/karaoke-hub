@@ -43,6 +43,7 @@ def load_model(path):
 
 def main():
     sys.stdout.reconfigure(encoding='utf-8')
+    sys.path.insert(0,str(Path(__file__).resolve().parent))
     parser=argparse.ArgumentParser();parser.add_argument('--model',required=True)
     arguments=parser.parse_args()
     predict,denoise,details=load_model(arguments.model)

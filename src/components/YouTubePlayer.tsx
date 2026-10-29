@@ -7,12 +7,15 @@ import { formatDuration } from '@/lib/queue-algorithm';
 import { loadYouTubeIframeApi } from '@/lib/youtube-iframe-api';
 import { shouldMutePlayer } from '@/lib/player-keyboard';
 import { getYouTubePlaybackStartSeconds } from '@/lib/youtube-playback';
+import { DelayedPlaybackEnd } from '@/lib/vocal-playback';
+import { VOCAL_CUT_PAGE_SOURCE } from '@/lib/vocal-cut-bridge';
 
 interface YouTubePlayerProps {
   isDisplayMode?: boolean; // TV / Projector Display Screen
   disableVideoInteraction?: boolean;
   tempoExtensionReady: boolean;
   onTempoRateChange: (playbackRate: number) => void;
+  nativeVocalDelayMs?: number;
 }
 
 export type TempoDirection = 'increase' | 'decrease';
@@ -65,6 +68,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   disableVideoInteraction = false,
   tempoExtensionReady,
   onTempoRateChange,
+  nativeVocalDelayMs=0,
 }, ref) {
   const {
     nowPlaying,
@@ -102,10 +106,18 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   const playbackRateRef = useRef(1);
   const availablePlaybackRatesRef = useRef<number[]>([]);
   const tempoExtensionReadyRef = useRef(tempoExtensionReady);
+  const nativeVocalDelayRef=useRef(nativeVocalDelayMs);
+  const delayedEndRef=useRef(new DelayedPlaybackEnd());
 
   const videoId = nowPlaying?.video?.youtube_video_id || '';
   const currentItemId = nowPlaying?.id || '';
   const playbackStartSeconds = getYouTubePlaybackStartSeconds(nowPlaying?.video?.channel_id);
+  useEffect(()=>{
+    nativeVocalDelayRef.current=nativeVocalDelayMs;
+    delayedEndRef.current.cancel();
+    const pending=delayedEndRef.current;
+    return ()=>pending.cancel();
+  },[nativeVocalDelayMs,currentItemId,isPlaying]);
 
   const videoIdRef = useRef(videoId);
   const currentItemIdRef = useRef(currentItemId);
@@ -371,6 +383,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
           onStateChange: (event: YT.OnStateChangeEvent) => {
             // YT.PlayerState: -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 cued
             if (event.data === youtubeApi.PlayerState.PLAYING) {
+              delayedEndRef.current.cancel();
               disableYouTubeCaptions(event.target);
               clearAutoplayCheck();
               autoplayAttemptItemIdRef.current = null;
@@ -394,8 +407,11 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
               if (endedItemId !== currentItemIdRef.current) return;
               if (!endedItemId || lastHandledItemIdRef.current === endedItemId) return;
 
-              resetTempo(event.target);
-              advanceAfterPlayback(endedItemId, 'ended');
+              delayedEndRef.current.schedule(endedItemId,nativeVocalDelayRef.current,()=>{
+                if(endedItemId!==currentItemIdRef.current)return;
+                resetTempo(event.target);
+                advanceAfterPlayback(endedItemId,'ended');
+              });
             }
           },
           onPlaybackRateChange: (event: YT.OnPlaybackRateChangeEvent) => {
@@ -526,6 +542,11 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   }, [resetTempo, tempoExtensionReady]);
 
   // Sync volume / mute state
+  useEffect(()=>{
+    if(!nativeVocalDelayMs||!videoId||!currentItemId)return;
+    window.postMessage({source:VOCAL_CUT_PAGE_SOURCE,version:1,type:'VOCAL_PLAYBACK_STATE',payload:{youtubeVideoId:videoId,queueItemId:currentItemId,playing:isPlaying}},location.origin);
+  },[nativeVocalDelayMs,currentItemId,videoId,isPlaying]);
+
   useEffect(() => {
     if (!playerRef.current) return;
     try {
@@ -543,6 +564,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     if (!player || !playerReadyRef.current || !itemId) return;
 
     try {
+      delayedEndRef.current.cancel();
       clearAutoplayCheck();
       setAutoplayBlockedItemId(null);
       setPlayerError((currentError) => currentError?.itemId === itemId ? null : currentError);
@@ -580,6 +602,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   }, [isPlaying, setCurrentTime]);
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    delayedEndRef.current.cancel();
     const newTime = parseFloat(e.target.value);
     setCurrentTime(newTime);
     if (playerRef.current && playerRef.current.seekTo) {
@@ -601,6 +624,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     if (!player || !playerReadyRef.current || !currentItemId) return;
 
     try {
+      delayedEndRef.current.cancel();
       clearAutoplayCheck();
       setAutoplayBlockedItemId(null);
       player.setVolume(volumeRef.current);
@@ -645,6 +669,8 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   return (
     <div
       ref={containerRef}
+      data-player-video-id={videoId}
+      data-player-queue-item-id={currentItemId}
       className={`relative w-full bg-black overflow-hidden flex flex-col ${
         isDisplayMode
           ? 'h-full rounded-none border-0 shadow-none'

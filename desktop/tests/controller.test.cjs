@@ -31,6 +31,27 @@ function setup(sendAudio = async () => ({ ok: true }), setPlaybackRate = async r
   });
   return { controller, audio };
 }
+
+test('real vocal removal requires a ready worker, captured audio and a playing MV; search changes do not stop it',async()=>{
+ const changes=[];
+ const controller=new DesktopAudioController({sendAudio:async()=>({ok:true}),setPlaybackRate:async rate=>rate,publish:()=>{},setVocal:async(enabled,options)=>changes.push({enabled,options})});
+ assert.equal((await controller.command('SET_VOCAL_REMOVER',{enabled:true})).ok,false);
+ controller.update({vocalRemoverReady:true});await controller.command('START_AUDIO');
+ await controller.command('TRACK_CHANGED',{youtubeVideoId:'abcdefghijk',queueItemId:'mv-1',versionType:'mv'});
+ assert.equal((await controller.command('SET_VOCAL_REMOVER',{enabled:true})).ok,true);
+ assert.equal(controller.state.vocalRemoverEnabled,true);
+ controller.update({vocalRemoverStatus:'on'});
+ const applied=changes.length;await controller.command('SET_VOCAL_REMOVER',{enabled:true});
+ assert.equal(controller.state.vocalRemoverStatus,'on');assert.equal(changes.length,applied,'Repeated enable is idempotent');
+ const count=changes.length;await controller.command('SET_SEARCH_VERSION',{version:'karaoke'});
+ assert.equal(changes.length,count);assert.equal(controller.state.vocalRemoverEnabled,true);
+ await controller.command('TRACK_CHANGED',{youtubeVideoId:'12345678901',queueItemId:'kr-2',versionType:'karaoke'});
+ assert.equal(controller.state.vocalRemoverEnabled,false);assert.equal(changes.at(-1).enabled,false);
+ assert.equal(changes.at(-1).options.restorePosition,false);
+ assert.equal((await controller.command('SET_VOCAL_REMOVER',{enabled:'true'})).ok,false);
+ await controller.command('STOP_AUDIO');
+ assert.equal(controller.state.vocalRemoverEnabled,false);
+});
 test('pitch changes only after audio starts and is reset on a new video', async () => {
   const { controller, audio } = setup();
   assert.equal((await controller.command('SET_PITCH', { semitones: 3 })).ok, false);

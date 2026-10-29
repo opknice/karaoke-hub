@@ -23,6 +23,7 @@ const eslintConfig = defineConfig([
     "android/app/src/main/assets/public/**",
     "desktop/dist/**",
     "desktop/audio/assets/**",
+    "desktop/vocal/runtime/**",
     "desktop/test-results/**",
     "next-env.d.ts",
   ]),

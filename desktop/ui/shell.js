@@ -4,9 +4,12 @@ function render(next=state) {
   state=next;
   $('version-karaoke').setAttribute('aria-pressed',String(state.searchVersion!=='mv'));
   $('version-mv').setAttribute('aria-pressed',String(state.searchVersion==='mv'));
-  $('vocal-remover').disabled=true;
-  $('vocal-remover').title=state.vocalRemoverEligible?'Vocal Remover AI ยังไม่พร้อมใช้งาน':'ใช้ได้เฉพาะเพลง MV ที่กำลังเล่น';
   const active=state.captureStatus==='capturing_original';
+  const vocalOn=Boolean(state.vocalRemoverEnabled);
+  $('vocal-remover').disabled=busy||(!vocalOn&&(!state.vocalRemoverEligible||!state.vocalRemoverReady||!active));
+  $('vocal-remover').textContent=state.vocalRuntimeStatus==='loading'?'เตรียม AI…':vocalOn?(state.vocalRemoverStatus==='preparing'?'ยกเลิก AI':'คืนเสียงร้อง'):'Vocal Remover';
+  $('vocal-remover').setAttribute('aria-pressed',String(vocalOn));
+  $('vocal-remover').title=state.vocalRuntimeError||state.vocalRemoverError||(!state.vocalRemoverEligible?'ใช้ได้เฉพาะเพลง MV ที่กำลังเล่น':!active?'เปิดระบบเสียงก่อนใช้ Vocal Remover':!state.vocalRemoverReady?'กำลังเตรียมระบบ AI':vocalOn?'กลับไปใช้เสียงต้นฉบับ':'แยกเสียงร้องด้วย AI · ภาพและเสียงหน่วงประมาณ 4.5 วินาที');
   const ready=active&&Boolean(state.currentVideoId);
   $('pitch').textContent=state.pitchSemitones>0?`+${state.pitchSemitones}`:String(state.pitchSemitones??0);
   $('rate').textContent=`${Math.round((state.playbackRate??1)*100)}%`;
@@ -18,7 +21,7 @@ function render(next=state) {
   $('tempo-down').disabled||=state.playbackRate<=0.25;
   $('tempo-up').disabled||=state.playbackRate>=2;
   $('indicator').classList.toggle('on',active);
-  $('status').textContent=state.playerError||state.lastError||(active?'ระบบเสียงพร้อม · ไม่ต้องใช้ Extension':state.playerReady?'พร้อมเล่น · เปิดระบบเสียงเพื่อปรับคีย์และความเร็ว':'กำลังเปิด Player…');
+  $('status').textContent=state.playerError||state.lastError||state.vocalRemoverError||state.vocalRuntimeError||(vocalOn?(state.vocalRemoverStatus==='preparing'?'กำลังแยกเสียงร้องและซิงก์ภาพ…':state.vocalRemoverStatus==='paused'?'Vocal Remover หยุดชั่วคราว':'AI ตัดเสียงร้องทำงาน · หน่วงประมาณ 4.5 วินาที'):active?'ระบบเสียงพร้อม · ไม่ต้องใช้ Extension':state.playerReady?'พร้อมเล่น · เปิดระบบเสียงเพื่อปรับคีย์และความเร็ว':'กำลังเปิด Player…');
 }
 async function command(type,payload={}) {
   if(busy) return;
@@ -28,6 +31,7 @@ async function command(type,payload={}) {
   finally{busy=false;render();}
 }
 $('audio').onclick=()=>command(state.captureStatus==='capturing_original'?'STOP_AUDIO':'START_AUDIO');
+$('vocal-remover').onclick=()=>command('SET_VOCAL_REMOVER',{enabled:!state.vocalRemoverEnabled});
 $('version-karaoke').onclick=()=>command('SET_SEARCH_VERSION',{version:'karaoke'});
 $('version-mv').onclick=()=>command('SET_SEARCH_VERSION',{version:'mv'});
 $('pitch-down').onclick=()=>command('SET_PITCH',{semitones:state.pitchSemitones-1});

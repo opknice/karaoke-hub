@@ -1,5 +1,14 @@
 # Desktop releases
 
+## 0.1.5 — 2026-10-29
+
+Replaced the disabled Vocal Remover placeholder with local UVR MDX source separation on a validated DirectML GPU. It works only for the playing MV, continues when search switches to Karaoke, and stops when that MV ends. Audio and video share a 4.5-second buffer; delayed video is capped at 720p/30 fps. Pause and seek invalidate old results, resume re-primes the buffer, and disabling restores the displayed position. Missed deadlines restore original playback and report an error.
+
+The installer includes an isolated Python/ONNX runtime and verified model, with no audio uploads or separate Python installation. Initial model warmup and measured hardware readiness gate the button. Existing key, one-percent tempo and keyboard-focus controls remain.
+
+Development acceptance on Windows 11 / GTX 1650 Ti measured first processed output at approximately 4.7 seconds and passed 90 seconds of continuous live processing, plus pause/seek/resume and delayed track end. Automated finite/non-silent output and timing checks do not establish subjective separation quality on every mix or compatibility with all Windows 10/11 hardware.
+
+
 ## 0.1.4 — 2026-10-29
 
 Fixed keyboard focus after toolbar buttons. The trusted native shell restores the Player view and song-search input immediately when a command is accepted, and again after completion/reload. Slow audio initialization therefore does not discard typing. Existing query text and caret are retained. Open QR dialogs and lyrics entry keep their focus; closing them restores search. Status polling never requests focus, and background windows are not activated.

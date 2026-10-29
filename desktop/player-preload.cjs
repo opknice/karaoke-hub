@@ -1,5 +1,19 @@
 const {ipcRenderer}=require('electron');
 const PAGE='karaoke-hub-page',EXTENSION='karaoke-hub-vocal-cut-extension';
+let vocalBridge=null;
+ipcRenderer.on('vocal-bridge',(_event,configuration)=>{vocalBridge=configuration;});
+window.addEventListener('message',event=>{
+  const packet=event.data;
+  if(!vocalBridge||packet?.source!=='karaoke-hub-live-video'||packet.token!==vocalBridge.token||packet.epoch!==vocalBridge.epoch)return;
+  const originAllowed=['https://www.youtube.com','https://www.youtube-nocookie.com'].includes(event.origin);
+  const frameAllowed=originAllowed&&Array.from(document.querySelectorAll('iframe')).some(frame=>{
+    try{const url=new URL(frame.src);return frame.contentWindow===event.source&&url.origin===event.origin&&/^\/embed\/(?:[\w-]{11})?$/.test(url.pathname);}catch{return false;}
+  });
+  const local=event.source===window&&event.origin===location.origin&&location.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(location.hostname);
+  if(!frameAllowed&&!local)return;
+  if(!['play','pause','seeking','seeked','ended','error'].includes(packet.kind)||!Number.isFinite(packet.time)||packet.time<0||typeof packet.paused!=='boolean')return;
+  ipcRenderer.send('vocal-transport',{epoch:packet.epoch,token:packet.token,kind:packet.kind,time:packet.time,paused:packet.paused,error:typeof packet.error==='string'?packet.error.slice(0,300):undefined});
+});
 // The hosted website still has legacy effect shortcuts. Suppress them in this
 // desktop app before React receives them; keep text entry in an active query.
 window.addEventListener('keydown',event=>{

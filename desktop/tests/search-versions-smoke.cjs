@@ -36,14 +36,14 @@ async function wait(read,check,label,timeout=60000){const until=Date.now()+timeo
     const unchanged=await state();
     assert.equal(unchanged.currentVersionType,'mv');assert.equal(unchanged.currentQueueItemId,playing.currentQueueItemId);
     assert.equal(unchanged.captureStatus,'capturing_original');assert.equal(unchanged.vocalRemoverEligible,true);
-    assert.equal(await shell.locator('#vocal-remover').isDisabled(),true,'AI worker is not implemented and must not be advertised as ready');
+    await wait(async()=>{const s=await state();return await shell.locator('#vocal-remover').isDisabled()===!s.vocalRemoverReady;},Boolean,'Vocal Remover follows actual runtime readiness');
     await Promise.all([remote.waitForEvent('domcontentloaded'),shell.locator('#reload').click()]);
     await wait(state,s=>s.currentVideoId===playing.currentVideoId&&s.currentVersionType==='mv'&&s.currentQueueItemId===playing.currentQueueItemId,'MV restored from database after reload');
     await searchFocused('Reload');
     assert.equal((await state()).searchVersion,'karaoke');
     await remote.evaluate(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'End',code:'End',bubbles:true,cancelable:true})));
     await wait(state,s=>s.currentVideoId===null&&!s.vocalRemoverEligible,'MV ended');
-    console.log('PASS real MV search, tagged queue persistence, independent Karaoke selector, uninterrupted MV audio, eligibility until track end; AI readiness stays false');
+    console.log('PASS real MV search, tagged queue persistence, independent Karaoke selector, uninterrupted MV audio, eligibility until track end; AI readiness follows the real GPU worker');
   }catch(error){if(remote)console.error((await remote.locator('body').innerText()).slice(-2400));if(shell)console.error(await shell.evaluate(()=>window.desktopPlayer.command('REQUEST_STATUS')));throw error;}
   finally{await app.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

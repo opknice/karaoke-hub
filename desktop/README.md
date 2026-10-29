@@ -4,7 +4,7 @@ Electron app targeting Windows 10 and Windows 11 **x64**. The local toolbar adds
 
 ## Install and use
 
-Build output: `dist/KaraokeHub-Setup-0.1.4-x64.exe`. Run the installer, open KARAOKE.HUB, select a song in the normal Player, then click **เปิดระบบเสียง**. The unpacked executable is `dist/win-unpacked/KARAOKE.HUB.exe`; keep its adjacent files together.
+Build output: `dist/KaraokeHub-Setup-0.1.5-x64.exe`. Run the installer, open KARAOKE.HUB, select a song in the normal Player, then click **เปิดระบบเสียง**. The unpacked executable is `dist/win-unpacked/KARAOKE.HUB.exe`; keep its adjacent files together.
 
 - Key: -6 to +6 semitones, one semitone per click.
 - Tempo: one percentage point per click, for example 125% → 126% or 125% → 124%, within 25%–200%. The normal rate is 100%. Page Up/Down use the same one-percent step when not editing search. The app sets the trusted Player's HTML media rate directly and verifies the accepted rate instead of jumping through YouTube's discrete API presets.
@@ -14,9 +14,11 @@ Build output: `dist/KaraokeHub-Setup-0.1.4-x64.exe`. Run the installer, open KAR
 - F11 toggles fullscreen; **โหลดใหม่** recovers from a page/network failure.
 - Select **Karaoke** or **MV / เพลงปกติ** at the top left to change search results. Karaoke keeps its catalog-first search; MV searches normal music videos. Search modes use separate caches. Each queued item retains its own version, including after a reload.
 - Toolbar buttons return keyboard focus to song search immediately and after the action completes. You can continue typing Thai without clicking the search box, including while audio is connecting. Open dialogs and lyrics editing retain their own input; closing them returns to song search. Background status polling does not capture focus or activate another app window.
-- Changing search mode does not replace or stop the playing MV. Its MV eligibility lasts until that queue item ends. **Vocal Remover AI is still unavailable**: its disabled button is a placeholder until real source separation passes the quality and <=5 second latency checks. No AI processing runs in this release.
+- Changing search mode does not replace or stop the playing MV. Its MV eligibility lasts until that queue item ends. **Vocal Remover** works on that playing MV: play the MV, click **เปิดระบบเสียง**, wait for the local AI to become ready, then enable **Vocal Remover**. Turning it off restores the original at the displayed position. Pause, seek and resume re-prime the live buffer; the delayed musical tail plays before the next queue item.
 
 This first installer is **unsigned**, because no publisher signing certificate is configured. Do not describe it as a signed release. The application retains the framework's default icon in this version.
+
+Vocal removal runs entirely on this computer with the bundled UVR MDX model and DirectML runtime; end users do not install Python. A sufficiently fast DirectX 12 GPU is required. The app measures GPU throughput before enabling the feature and restores original playback with an error if processing misses its deadline. Initial model warmup is separate from the 4.5-second live buffer. On the tested GTX 1650 Ti, first processed output measured about 4.7 seconds; other hardware/output devices may differ. Delayed video is limited to 720p and 30 fps. Separation quality depends on the mix and can leave residual vocals or affect instruments.
 
 ## Development
 
@@ -43,6 +45,10 @@ npm start
 ```
 
 Only the production origin `https://karaoke-hub-nu.vercel.app/player` and explicitly configured HTTP loopback origins are accepted. A configured loopback site receives the same restricted audio bridge; use a server you control. The packaged default always points to production. No `.env.local`, service-role keys, server source or user profile is packaged.
+
+Before packaging, copy `.vocal-build.example.json` to ignored `.vocal-build.json` and supply local build input paths. `prepare:vocal` stages isolated CPython 3.12, NumPy 2.2.6, SciPy 1.15.3, onnxruntime-directml 1.24.4 and the exact SHA256-verified UVR_MDXNET_Main.onnx into ignored `vocal/runtime`. Packages retain their license notices. The installer bundles these files as resources; developer paths/config are excluded.
+
+`node tests/vocal-runtime-smoke.cjs` validates the real portable GPU worker. Set `KARAOKE_VOCAL_ROOT` to packaged `resources/vocal` to test shipped resources. `node tests/vocal-remover-smoke.cjs --extended` checks a real MV, the five-second startup deadline, search independence, pause/seek, original restoration and delayed track end. `--long` adds 90 seconds of continuous processing. `KARAOKE_EXECUTABLE` selects the packaged executable; `KARAOKE_PLAYER_URL` selects the trusted local/production Player. Run hardware timing tests separately from builds.
 
 `prepare:assets` copies only the shared pitch processor core from `../browser-extension` into ignored `audio/assets` and deletes known generated assets from older effect-enabled builds. Both test and packaging scripts regenerate it. The desktop pitch adapter applies only the requested semitone ratio to captured PCM; it does not apply inverse-tempo compensation on top of Chromium's native pitch-preserving media playback. The existing measured phase vocoder is reused; SoundTouchJS is not a runtime dependency in this version.
 

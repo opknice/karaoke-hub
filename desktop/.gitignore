@@ -4,3 +4,4 @@ audio/assets/
 test-results/
 __pycache__/
 vocal/runtime/
+.vocal-build.json

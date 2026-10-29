@@ -1,5 +1,9 @@
 import { AudioEngine } from './engine.mjs';
-const engine=new AudioEngine((patch,generation)=>window.audioHost.event(patch,generation));
+const engine=new AudioEngine((patch,generation)=>window.audioHost.event(patch,generation),{feedVocal:packet=>window.audioHost.vocalPcm(packet)});
+window.addEventListener('message',event=>{
+  if(event.source!==window||event.origin!==location.origin||event.data?.source!=='karaoke-hub-vocal-worker')return;
+  void engine.apply('VOCAL_RESULT',event.data.packet).catch(()=>{});
+});
 window.addEventListener('audio-command',async event=>{
   const {id,type,payload,generation:nextGeneration}=event.detail;
   try {
