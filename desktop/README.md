@@ -4,7 +4,7 @@ Electron app targeting Windows 10 and Windows 11 **x64**. The local toolbar adds
 
 ## Install and use
 
-Build output: `dist/KaraokeHub-Setup-0.1.3-x64.exe`. Run the installer, open KARAOKE.HUB, select a song in the normal Player, then click **เปิดระบบเสียง**. The unpacked executable is `dist/win-unpacked/KARAOKE.HUB.exe`; keep its adjacent files together.
+Build output: `dist/KaraokeHub-Setup-0.1.4-x64.exe`. Run the installer, open KARAOKE.HUB, select a song in the normal Player, then click **เปิดระบบเสียง**. The unpacked executable is `dist/win-unpacked/KARAOKE.HUB.exe`; keep its adjacent files together.
 
 - Key: -6 to +6 semitones, one semitone per click.
 - Tempo: one percentage point per click, for example 125% → 126% or 125% → 124%, within 25%–200%. The normal rate is 100%. Page Up/Down use the same one-percent step when not editing search. The app sets the trusted Player's HTML media rate directly and verifies the accepted rate instead of jumping through YouTube's discrete API presets.
@@ -13,6 +13,7 @@ Build output: `dist/KaraokeHub-Setup-0.1.3-x64.exe`. Run the installer, open KAR
 - Key resets when the video changes. Audio settings are local and not written to the room database.
 - F11 toggles fullscreen; **โหลดใหม่** recovers from a page/network failure.
 - Select **Karaoke** or **MV / เพลงปกติ** at the top left to change search results. Karaoke keeps its catalog-first search; MV searches normal music videos. Search modes use separate caches. Each queued item retains its own version, including after a reload.
+- Toolbar buttons return keyboard focus to song search immediately and after the action completes. You can continue typing Thai without clicking the search box, including while audio is connecting. Open dialogs and lyrics editing retain their own input; closing them returns to song search. Background status polling does not capture focus or activate another app window.
 - Changing search mode does not replace or stop the playing MV. Its MV eligibility lasts until that queue item ends. **Vocal Remover AI is still unavailable**: its disabled button is a placeholder until real source separation passes the quality and <=5 second latency checks. No AI processing runs in this release.
 
 This first installer is **unsigned**, because no publisher signing certificate is configured. Do not describe it as a signed release. The application retains the framework's default icon in this version.
@@ -31,6 +32,8 @@ npm run dist
 ```
 
 `test:electron` launches the real app against a local, stereo 440 Hz WAV fixture. It checks selective capture, measured output frequencies, exact 125% → 126%/124% native media rates, percentage display, one-percent keyboard steps, pitch preservation, reset, removed effect buttons/commands/shortcuts, stop/restart, invalid parameters and reload. `test:hosted` checks production Player boot/search input; `node tests/hosted-smoke.cjs --play` additionally uses an isolated test room, selects a real catalog song and reads back actual YouTube media rates while testing key/tempo changes. `node tests/search-versions-smoke.cjs` checks actual MV search, queued metadata across reload, uninterrupted MV audio when switching search back to Karaoke, and eligibility ending with the track (defaults to local port 3001; override `KARAOKE_PLAYER_URL` for production).
+
+`node tests/focus-smoke.cjs` checks native keyboard delivery after selector/audio/reload actions, including a deliberately delayed audio connection, QR dialog closing and lyrics input. It sends Thai characters to the currently focused webContents without using a locator to focus the search box.
 
 For local web development only:
 

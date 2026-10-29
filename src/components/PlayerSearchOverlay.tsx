@@ -183,7 +183,7 @@ export function PlayerSearchOverlay({
   }, [isQueueBrowserActive, onQueueBrowserActiveChange]);
 
   const focusSearchInput = useCallback(() => {
-    if (lyricsUiActiveRef.current) return;
+    if (lyricsUiActiveRef.current || document.querySelector('[role="dialog"][aria-modal="true"]')) return;
     inputRef.current?.focus({ preventScroll: true });
   }, []);
 
@@ -420,7 +420,7 @@ export function PlayerSearchOverlay({
         && target !== inputRef.current
         && (
           target.isContentEditable
-          || target.closest('input, textarea, select, [role="textbox"], [role="dialog"], [data-player-lyrics-ui]')
+          || target.closest('input, textarea, select, [role="textbox"], [data-player-lyrics-ui]')
         )
       ) {
         return;
@@ -430,9 +430,11 @@ export function PlayerSearchOverlay({
     };
 
     window.addEventListener('blur', recaptureFocusFromPlayer);
+    window.addEventListener('karaoke-player-focus-search', recaptureFocusFromPlayer);
     document.addEventListener('click', recaptureFocusAfterPointer, true);
     return () => {
       window.removeEventListener('blur', recaptureFocusFromPlayer);
+      window.removeEventListener('karaoke-player-focus-search', recaptureFocusFromPlayer);
       document.removeEventListener('click', recaptureFocusAfterPointer, true);
     };
   }, [focusSearchInput]);

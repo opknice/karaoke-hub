@@ -12,6 +12,7 @@ async function wait(read,check,label,timeout=60000){const until=Date.now()+timeo
     remote=await wait(async()=>app.context().pages().find(p=>p.url().startsWith(url)),Boolean,'Player');
     remote.on('pageerror',error=>console.error('Player:',error.message));
     const state=async()=>(await shell.evaluate(()=>window.desktopPlayer.command('REQUEST_STATUS'))).state;
+    const searchFocused=label=>wait(()=>remote.getByRole('combobox').evaluate(el=>document.hasFocus()&&document.activeElement===el),Boolean,`${label}: keyboard ready for search`,5000);
     await wait(()=>remote.locator('body').innerText(),text=>/ROOM:\s*[A-Z0-9]{6}/.test(text),'Room ready',90000);
     await shell.locator('#version-mv').click();
     await remote.getByRole('button',{name:'ค้นหา MV',exact:true}).waitFor();
@@ -23,14 +24,22 @@ async function wait(read,check,label,timeout=60000){const until=Date.now()+timeo
     await remote.getByRole('option').first().click();
     const playing=await wait(state,s=>s.currentVersionType==='mv'&&s.currentQueueItemId,'MV queue metadata');
     await shell.locator('#audio').click();await wait(state,s=>s.captureStatus==='capturing_original','Audio running');
+    await searchFocused('Audio');
+    for(const id of ['pitch-up','pitch-down','tempo-up','tempo-down','reset']) {
+      await shell.locator(`#${id}`).click();
+      await searchFocused(id);
+      await wait(()=>shell.locator('#reset').isEnabled(),Boolean,`${id}: command complete`,15000);
+    }
     await shell.locator('#version-karaoke').click();
     await wait(state,s=>s.searchVersion==='karaoke','Search changed back');
+    await searchFocused('Karaoke selector');
     const unchanged=await state();
     assert.equal(unchanged.currentVersionType,'mv');assert.equal(unchanged.currentQueueItemId,playing.currentQueueItemId);
     assert.equal(unchanged.captureStatus,'capturing_original');assert.equal(unchanged.vocalRemoverEligible,true);
     assert.equal(await shell.locator('#vocal-remover').isDisabled(),true,'AI worker is not implemented and must not be advertised as ready');
     await Promise.all([remote.waitForEvent('domcontentloaded'),shell.locator('#reload').click()]);
     await wait(state,s=>s.currentVideoId===playing.currentVideoId&&s.currentVersionType==='mv'&&s.currentQueueItemId===playing.currentQueueItemId,'MV restored from database after reload');
+    await searchFocused('Reload');
     assert.equal((await state()).searchVersion,'karaoke');
     await remote.evaluate(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'End',code:'End',bubbles:true,cancelable:true})));
     await wait(state,s=>s.currentVideoId===null&&!s.vocalRemoverEligible,'MV ended');

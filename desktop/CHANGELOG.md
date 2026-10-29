@@ -1,5 +1,11 @@
 # Desktop releases
 
+## 0.1.4 — 2026-10-29
+
+Fixed keyboard focus after toolbar buttons. The trusted native shell restores the Player view and song-search input immediately when a command is accepted, and again after completion/reload. Slow audio initialization therefore does not discard typing. Existing query text and caret are retained. Open QR dialogs and lyrics entry keep their focus; closing them restores search. Status polling never requests focus, and background windows are not activated.
+
+The real Electron focus regression was reproduced before the fix and passed after it, including native Thai character delivery, delayed audio initialization, selector/audio/reload, modal closing and lyrics input. The review's delayed-command finding was separately reproduced and fixed with a failing-then-passing test. Pitch and one-percent tempo behavior are unchanged.
+
 ## 0.1.3 — 2026-10-29
 
 Added the top-left Karaoke / MV selector in Electron and the browser Player. Karaoke retains catalog-first search. MV uses a separate music-video search and cache, excludes known karaoke/backing-track titles, and never saves results into the Karaoke catalog. Cache keys preserve video-ID case and fit the existing database limits.

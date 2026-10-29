@@ -30,4 +30,5 @@ window.addEventListener('message',event=>{
     .catch(()=>post('EXTENSION_RESPONSE',{ok:false,error:'ระบบเสียง Desktop ไม่พร้อม'},m.requestId));
 });
 ipcRenderer.on('audio-state',(_event,state)=>post('STATE_CHANGED',{ok:true,state}));
+ipcRenderer.on('player-focus-search',()=>window.dispatchEvent(new Event('karaoke-player-focus-search')));
 window.addEventListener('DOMContentLoaded',()=>post('EXTENSION_READY',{installed:true}));

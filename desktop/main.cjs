@@ -60,6 +60,12 @@ function resizePlayer() {
   const [width,height]=window.getContentSize();
   player.setBounds({x:0,y:112,width,height:Math.max(0,height-112)});
 }
+function restorePlayerSearchFocus() {
+  if(!window||window.isDestroyed()||!window.isFocused()||!player||player.webContents.isDestroyed()) return;
+  if(!isPlayerUrl(player.webContents.getURL(),playerUrl)) return;
+  player.webContents.focus();
+  player.webContents.send('player-focus-search');
+}
 function restrictNavigation(contents,allowed) {
   contents.setWindowOpenHandler(({url})=>{
     if(/^https?:\/\//.test(url)) void shell.openExternal(url);
@@ -101,8 +107,13 @@ app.whenReady().then(async()=>{
   });
   ipcMain.handle('shell-command',async(event,message)=>{
     if(!validSender(event,window.webContents,url=>isLocal(url,'ui/index.html'))) return {ok:false,error:'Untrusted shell'};
-    if(message?.type==='RELOAD_PLAYER') {await controller.disconnect();await player.webContents.loadURL(playerUrl).catch(()=>{});return {ok:true,state:controller.state};}
-    return controller.command(message?.type,message?.payload);
+    if(message?.type!=='REQUEST_STATUS') restorePlayerSearchFocus();
+    try {
+      if(message?.type==='RELOAD_PLAYER') {await controller.disconnect();await player.webContents.loadURL(playerUrl).catch(()=>{});return {ok:true,state:controller.state};}
+      return await controller.command(message?.type,message?.payload);
+    } finally {
+      if(message?.type!=='REQUEST_STATUS') restorePlayerSearchFocus();
+    }
   });
   ipcMain.on('audio-reply',(event,{id,result}={})=>{
     if(validSender(event,audioWindow.webContents,url=>isLocal(url,'audio/index.html'))) settle(audioRequests,id,result);
