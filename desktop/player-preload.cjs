@@ -1,5 +1,15 @@
 const {ipcRenderer}=require('electron');
 const PAGE='karaoke-hub-page',EXTENSION='karaoke-hub-vocal-cut-extension';
+// The hosted website still has legacy effect shortcuts. Suppress them in this
+// desktop app before React receives them; keep text entry in an active query.
+window.addEventListener('keydown',event=>{
+  if(event.altKey||event.ctrlKey||event.metaKey||event.isComposing) return;
+  if(!['*','/'].includes(event.key)&&!['NumpadMultiply','NumpadDivide'].includes(event.code)) return;
+  const target=event.target;
+  const editing=target instanceof HTMLElement&&(target.isContentEditable||target.closest('textarea,select,[role="textbox"]')||(target instanceof HTMLInputElement&&target.value.length>0));
+  if(editing) return;
+  event.preventDefault();event.stopImmediatePropagation();
+},true);
 function post(type,payload,requestId) {
   window.postMessage({source:EXTENSION,version:1,type,payload,requestId},window.location.origin);
 }

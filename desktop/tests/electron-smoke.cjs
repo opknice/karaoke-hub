@@ -38,6 +38,18 @@ async function until(read,check,label,timeout=15000) {
     const page=await until(async()=>app.context().pages().find(p=>p.url()==='karaoke-app://app/ui/index.html'),Boolean,'Shell window');
     const state=()=>page.evaluate(()=>window.desktopPlayer.command('REQUEST_STATUS')).then(x=>x.state);
     await until(state,s=>s?.playerReady&&s.currentVideoId==='tone440aaaa','Player ready');
+    assert.equal(await page.getByRole('button',{name:'Vocal Cut',exact:true}).count(),0);
+    assert.equal(await page.getByRole('button',{name:'Auto Level',exact:true}).count(),0);
+    const remote=await until(async()=>app.context().pages().find(p=>p.url().startsWith(`http://127.0.0.1:${port}/player`)),Boolean,'Player view');
+    const removedShortcuts=await remote.evaluate(()=>{
+      let seen=0;
+      const handler=event=>{if(event.key==='*'||event.key==='/')seen++;};
+      window.addEventListener('keydown',handler);
+      for(const [key,code] of [['*','NumpadMultiply'],['/','NumpadDivide']])window.dispatchEvent(new KeyboardEvent('keydown',{key,code,bubbles:true,cancelable:true}));
+      window.removeEventListener('keydown',handler);
+      return seen;
+    });
+    assert.equal(removedShortcuts,0,'Removed shortcuts must not reach legacy Player handlers');
     const security=await app.evaluate(({webContents})=>webContents.getAllWebContents().filter(w=>w.getURL().startsWith('http://127.0.0.1')).map(w=>w.getLastWebPreferences()));
     assert.ok(security.length>0&&security.every(p=>p.sandbox&&p.contextIsolation&&!p.nodeIntegration));
     await page.locator('#audio').click();
@@ -54,14 +66,15 @@ async function until(read,check,label,timeout=15000) {
     await until(state,s=>s.pitchSemitones===1&&Math.abs(s.peakHz-466.164)<9,'Independent tempo and pitch');
     await page.locator('#reset').click();
     await until(state,s=>s.pitchSemitones===0&&s.playbackRate===1&&Math.abs(s.peakHz-440)<9,'Reset without restarting song');
-    await page.locator('#vocal').click();await until(state,s=>s.enabled,'Vocal Cut');
-    await page.locator('#normalize').click();await until(state,s=>s.normalizeEnabled,'Auto Level');
+    for(const type of ['TOGGLE_VOCAL_CUT','TOGGLE_LOUDNESS_NORMALIZE']) {
+      assert.equal((await page.evaluate(type=>window.desktopPlayer.command(type),type)).ok,false);
+    }
     await page.locator('#audio').click();
     await until(state,s=>s.captureStatus==='installed_idle'&&!s.supportsPitchPreservedTempo,'Stop releases processing');
     await page.locator('#audio').click();await until(state,s=>s.captureStatus==='capturing_original'&&s.outputRms>0.05,'Restart audio');
     const denied=await page.evaluate(()=>window.desktopPlayer.command('SET_PITCH',{semitones:Infinity}));assert.equal(denied.ok,false);
     await page.locator('#reload').click();
     await until(state,s=>s.playerReady&&s.captureStatus==='installed_idle','Reload revokes audio');
-    console.log('PASS Electron: real cross-webContents capture, -6/+3/+6 key, native 1.25x tempo, independent key, reset, Vocal Cut, Auto Level, stop/restart, validation, reload');
+    console.log('PASS Electron: pitch/tempo only, removed effects unavailable, real capture, key/rate/reset, stop/restart, validation, reload');
   } finally {await app?.close();await new Promise(resolve=>server.close(resolve));}
 })().catch(error=>{console.error(error);process.exitCode=1;});

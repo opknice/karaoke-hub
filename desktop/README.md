@@ -4,13 +4,13 @@ Electron app targeting Windows 10 and Windows 11 **x64**. The local toolbar adds
 
 ## Install and use
 
-Build output: `dist/KaraokeHub-Setup-0.1.0-x64.exe`. Run the installer, open KARAOKE.HUB, select a song in the normal Player, then click **เปิดระบบเสียง**. The unpacked executable is `dist/win-unpacked/KARAOKE.HUB.exe`; keep its adjacent files together.
+Build output: `dist/KaraokeHub-Setup-0.1.1-x64.exe`. Run the installer, open KARAOKE.HUB, select a song in the normal Player, then click **เปิดระบบเสียง**. The unpacked executable is `dist/win-unpacked/KARAOKE.HUB.exe`; keep its adjacent files together.
 
 - Key: -6 to +6 semitones, one semitone per click.
 - Speed: previous/next YouTube-supported rate; the toolbar shows the rate acknowledged by the Player. Page Up/Down also work in the Player when not editing search.
 - **คืนค่าเดิม** resets key and tempo without restarting the song.
 - **หยุดระบบเสียง** releases capture and returns audio playback to the original Player.
-- Vocal Cut and Auto Level use local AudioWorklets. Key resets when the video changes. Effects/preferences are local and not written to the room database.
+- Key resets when the video changes. Audio settings are local and not written to the room database.
 - F11 toggles fullscreen; **โหลดใหม่** recovers from a page/network failure.
 
 This first installer is **unsigned**, because no publisher signing certificate is configured. Do not describe it as a signed release. The application retains the framework's default icon in this version.
@@ -28,7 +28,7 @@ npm run test:hosted
 npm run dist
 ```
 
-`test:electron` launches the real app against a local, stereo 440 Hz WAV fixture. It checks selective capture, measured output frequencies, native pitch-preserving speed changes, reset, Vocal Cut/Auto Level, stop/restart, invalid parameters and reload. `test:hosted` checks production Player boot/search input; `node tests/hosted-smoke.cjs --play` additionally creates an isolated room, selects a real catalog song and tests non-silent YouTube playback with key/tempo changes.
+`test:electron` launches the real app against a local, stereo 440 Hz WAV fixture. It checks selective capture, measured output frequencies, native pitch-preserving speed changes, reset, removed effect buttons/commands/shortcuts, stop/restart, invalid parameters and reload. `test:hosted` checks production Player boot/search input; `node tests/hosted-smoke.cjs --play` additionally uses an isolated test room, selects a real catalog song and tests non-silent YouTube playback with key/tempo changes.
 
 For local web development only:
 
@@ -39,7 +39,9 @@ npm start
 
 Only the production origin `https://karaoke-hub-nu.vercel.app/player` and explicitly configured HTTP loopback origins are accepted. A configured loopback site receives the same restricted audio bridge; use a server you control. The packaged default always points to production. No `.env.local`, service-role keys, server source or user profile is packaged.
 
-`prepare:assets` copies the existing shared DSP modules from `../browser-extension` into ignored `audio/assets`. Both test and packaging scripts regenerate them. The desktop pitch adapter applies only the requested semitone ratio to captured PCM; it does not apply inverse-tempo compensation on top of Chromium's native pitch-preserving media playback. The existing measured phase vocoder is reused; SoundTouchJS is not a runtime dependency in this version.
+`prepare:assets` copies only the shared pitch processor core from `../browser-extension` into ignored `audio/assets` and deletes known generated assets from older effect-enabled builds. Both test and packaging scripts regenerate it. The desktop pitch adapter applies only the requested semitone ratio to captured PCM; it does not apply inverse-tempo compensation on top of Chromium's native pitch-preserving media playback. The existing measured phase vocoder is reused; SoundTouchJS is not a runtime dependency in this version.
+
+Version 0.1.1 removes Vocal Cut and Auto Level from the desktop toolbar, command handlers, audio graph and packaged assets. The legacy hosted Player's effect shortcuts are suppressed in this app. The bridge retains false compatibility flags so hosted pitch/tempo controls still work. Existing website and browser extension sources are separate and are not changed by this desktop release.
 
 ## Audio and security boundaries
 

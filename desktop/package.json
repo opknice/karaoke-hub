@@ -1,6 +1,6 @@
 {
   "name": "karaoke-hub-desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "KARAOKE.HUB Windows Player with local key and tempo controls",
   "author": "KARAOKE.HUB",
@@ -25,9 +25,28 @@
     "appId": "app.karaokehub.player",
     "productName": "KARAOKE.HUB",
     "asar": true,
-    "directories": { "output": "dist" },
-    "files": ["main.cjs", "*preload.cjs", "lib/**/*", "ui/**/*", "audio/**/*", "package.json", "!**/*.map"],
-    "win": { "target": "nsis", "signExecutable": false },
-    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "artifactName": "KaraokeHub-Setup-${version}-${arch}.${ext}" }
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.cjs",
+      "*preload.cjs",
+      "lib/**/*",
+      "ui/**/*",
+      "audio/**/*",
+      "package.json",
+      "!**/*.map"
+    ],
+    "win": {
+      "target": "nsis",
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "artifactName": "KaraokeHub-Setup-${version}-${arch}.${ext}"
+    }
   }
 }

@@ -2,12 +2,11 @@ const { validateCommand } = require('./policy.cjs');
 
 function initialState() {
   return {
-    captureStatus: 'installed_idle', enabled: false, monoLike: false, inputChannelCount: null,
-    correlation: null, sideRatio: null, adaptiveCenterConfidence: null, adaptiveCenterGain: null,
-    preset: 'balanced', supportsLoudnessNormalize: false, supportsPitchPreservedTempo: false,
-    playbackRate: 1, pitchSemitones: 0, normalizeEnabled: false, normalizeStatus: 'off',
-    measuredLoudnessDb: null, normalizationGainDb: null, limiterReductionDb: null,
-    playerVolume: 85, playerMuted: false, lastError: null, currentVideoId: null, preference: null,
+    // These false flags retain compatibility with the hosted Player bridge.
+    captureStatus: 'installed_idle', enabled: false, monoLike: false,
+    supportsLoudnessNormalize: false, supportsPitchPreservedTempo: false,
+    playbackRate: 1, pitchSemitones: 0,
+    playerVolume: 85, playerMuted: false, lastError: null, currentVideoId: null,
     inputRms: 0, outputRms: 0, peakHz: 0,
   };
 }
@@ -18,7 +17,7 @@ class DesktopAudioController {
     this.queue = Promise.resolve();
   }
   update(patch) { this.state = { ...this.state, ...patch }; this.publish(this.state); }
-  get active() { return ['capturing_original', 'capturing_vocal_cut'].includes(this.state.captureStatus); }
+  get active() { return this.state.captureStatus === 'capturing_original'; }
   async audio(type, payload = {}, generation = this.generation) {
     let timer;
     try {
@@ -33,8 +32,7 @@ class DesktopAudioController {
   }
   deactivate(status, lastError = null) {
     this.update({ captureStatus: status, lastError, enabled: false, supportsLoudnessNormalize: false,
-      supportsPitchPreservedTempo: false, pitchSemitones: 0, playbackRate: 1, normalizeEnabled: false,
-      normalizeStatus: 'off', inputRms: 0, outputRms: 0 });
+      supportsPitchPreservedTempo: false, pitchSemitones: 0, playbackRate: 1, inputRms: 0, outputRms: 0 });
   }
   audioEvent(patch, generation) {
     if (generation !== this.generation) return;
@@ -82,9 +80,7 @@ class DesktopAudioController {
         this.update({ captureStatus: 'starting', lastError: null });
         await this.audio('START_AUDIO', {}, generation);
         if (generation !== this.generation) return;
-        await this.audio('SET_PRESET', { preset: this.state.preset }, generation);
-        await this.audio('SET_PLAYER_VOLUME', { volume: this.state.playerVolume, muted: this.state.playerMuted }, generation);
-        this.update({ captureStatus: 'capturing_original', supportsLoudnessNormalize: true, supportsPitchPreservedTempo: true, lastError: null });
+        this.update({ captureStatus: 'capturing_original', supportsPitchPreservedTempo: true, lastError: null });
         return;
       }
       case 'STOP_AUDIO': await this.audio('STOP_AUDIO'); return;
@@ -96,7 +92,6 @@ class DesktopAudioController {
         return;
       }
       case 'SET_PLAYER_VOLUME':
-        if (this.active) await this.audio(type, payload);
         this.update({ playerVolume: payload.volume, playerMuted: payload.muted }); return;
       case 'SET_PITCH':
         if (!this.active || !this.state.currentVideoId) throw new Error('เปิดระบบเสียงและเลือกเพลงก่อนปรับคีย์');
@@ -107,23 +102,6 @@ class DesktopAudioController {
           throw new Error('เปิดระบบเสียงก่อนปรับความเร็ว');
         }
         await this.audio(type, payload); this.update({ playbackRate: payload.playbackRate }); return;
-      case 'TOGGLE_VOCAL_CUT': {
-        if (!this.active) throw new Error('เปิดระบบเสียงก่อน');
-        const enabled = !this.state.enabled;
-        await this.audio('SET_VOCAL_CUT', { enabled });
-        this.update({ enabled, captureStatus: enabled ? 'capturing_vocal_cut' : 'capturing_original' }); return;
-      }
-      case 'TOGGLE_LOUDNESS_NORMALIZE': {
-        if (!this.active) throw new Error('เปิดระบบเสียงก่อน');
-        const enabled = !this.state.normalizeEnabled;
-        await this.audio('SET_LOUDNESS_NORMALIZE', { enabled });
-        this.update({ normalizeEnabled: enabled, normalizeStatus: enabled ? 'warming' : 'off' }); return;
-      }
-      case 'SET_VOCAL_CUT_PRESET':
-        if (this.active) await this.audio('SET_PRESET', payload);
-        this.update({ preset: payload.preset }); return;
-      case 'SUBMIT_VOCAL_CUT_RESULT':
-        this.update({ preference: { youtubeVideoId: payload.youtubeVideoId, lastResult: payload.result, lastPreset: this.state.preset } }); return;
     }
   }
   async step(direction) {

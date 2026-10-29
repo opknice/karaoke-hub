@@ -98,13 +98,14 @@ test('an in-flight key acknowledgement cannot overwrite a stopped session', asyn
   assert.equal(controller.state.pitchSemitones,0);
   assert.equal(controller.state.captureStatus,'installed_idle');
 });
-test('restarting audio reapplies the selected preset before advertising readiness', async () => {
+test('removed Vocal Cut and Auto Level commands cannot reach the audio host', async () => {
   const {controller,audio}=setup();
   await controller.command('START_AUDIO');
-  await controller.command('SET_VOCAL_CUT_PRESET',{preset:'maximum'});
-  await controller.command('STOP_AUDIO');
   audio.length=0;
-  await controller.command('START_AUDIO');
+  for(const [type,payload] of [['TOGGLE_VOCAL_CUT',{}],['TOGGLE_LOUDNESS_NORMALIZE',{}],['SET_VOCAL_CUT_PRESET',{preset:'maximum'}],['SUBMIT_VOCAL_CUT_RESULT',{youtubeVideoId:'abcdefghijk',result:'good'}]]) {
+    assert.equal((await controller.command(type,payload)).ok,false,type);
+  }
+  assert.equal(audio.length,0);
+  assert.equal(controller.state.supportsLoudnessNormalize,false);
   assert.equal(controller.state.captureStatus,'capturing_original');
-  assert.ok(audio.some(x=>x.type==='SET_PRESET'&&x.payload.preset==='maximum'));
 });

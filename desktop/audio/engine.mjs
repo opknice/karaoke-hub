@@ -19,36 +19,23 @@ export class AudioEngine {
       if(epoch!==this.epoch) throw new Error('ยกเลิกการเริ่มระบบเสียงแล้ว');
       if(!stream.getAudioTracks().length) throw new Error('ไม่ได้รับเสียงจาก Player');
       context=new AudioContext({latencyHint:'interactive'});
-      await Promise.all([
-        context.audioWorklet.addModule(new URL('./pitch-processor.js',import.meta.url)),
-        context.audioWorklet.addModule(new URL('./assets/center-attenuation-processor.js',import.meta.url)),
-        context.audioWorklet.addModule(new URL('./assets/loudness-normalizer-processor.js',import.meta.url)),
-      ]);
+      await context.audioWorklet.addModule(new URL('./pitch-processor.js',import.meta.url));
       if(epoch!==this.epoch) throw new Error('ยกเลิกการเริ่มระบบเสียงแล้ว');
       const options={channelCount:2,channelCountMode:'max',outputChannelCount:[2]};
       const source=context.createMediaStreamSource(stream);
       const pitch=new AudioWorkletNode(context,'desktop-pitch',options);
-      const vocal=new AudioWorkletNode(context,'center-attenuation-processor',options);
-      const normalize=new AudioWorkletNode(context,'loudness-normalizer-processor',options);
-      const limiter=context.createDynamicsCompressor();
-      limiter.threshold.value=-1; limiter.knee.value=1; limiter.ratio.value=20; limiter.attack.value=0.005;limiter.release.value=0.2;
       const inputMeter=context.createAnalyser(), outputMeter=context.createAnalyser();
       inputMeter.fftSize=2048; outputMeter.fftSize=8192;
-      source.connect(inputMeter).connect(pitch).connect(vocal).connect(normalize).connect(limiter).connect(outputMeter).connect(context.destination);
-      const graph={stream,context,pitch,vocal,normalize,limiter,inputMeter,outputMeter,nodes:[source,inputMeter,pitch,vocal,normalize,limiter,outputMeter]};
+      source.connect(inputMeter).connect(pitch).connect(outputMeter).connect(context.destination);
+      const graph={stream,context,pitch,inputMeter,outputMeter,nodes:[source,inputMeter,pitch,outputMeter]};
       this.graph=graph;
-      // Default mix is dry, and gain remains unity until explicitly enabled.
-      vocal.parameters.get('mix').value=0;
-      normalize.port.postMessage({type:'SET_ENABLED',enabled:false});
-      vocal.port.onmessage=({data})=>{ if(this.graph===graph&&data?.type==='ANALYSIS') report({monoLike:(data.metrics.inputChannelCount??2)===1,inputChannelCount:data.metrics.inputChannelCount??2}); };
-      normalize.port.onmessage=({data})=>{ if(this.graph===graph&&data?.type==='LOUDNESS_ANALYSIS') report(data.metrics); };
       graph.timer=setInterval(()=>{
         if(this.graph!==graph) return;
         const input=new Float32Array(inputMeter.fftSize),output=new Float32Array(outputMeter.fftSize),spectrum=new Float32Array(outputMeter.frequencyBinCount);
         inputMeter.getFloatTimeDomainData(input);outputMeter.getFloatTimeDomainData(output);outputMeter.getFloatFrequencyData(spectrum);
         let peak=1;for(let i=2;i<spectrum.length;i++) if(spectrum[i]>spectrum[peak]) peak=i;
         const rms=buffer=>Math.sqrt(buffer.reduce((sum,n)=>sum+n*n,0)/buffer.length);
-        report({inputRms:rms(input),outputRms:rms(output),peakHz:peak*context.sampleRate/outputMeter.fftSize,limiterReductionDb:limiter.reduction});
+        report({inputRms:rms(input),outputRms:rms(output),peakHz:peak*context.sampleRate/outputMeter.fftSize});
       },250);
       for(const track of stream.getTracks()) track.onended=()=>{
         if(this.graph!==graph) return;
@@ -72,11 +59,7 @@ export class AudioEngine {
       case 'SET_PITCH': this.key=payload.semitones;g.pitch.port.postMessage({type,semitones:this.key});break;
       case 'SET_PLAYBACK_RATE': break; // Source transport already preserves pitch; do not compensate twice.
       case 'RESET_TRACK':
-        this.key=0;g.pitch.port.postMessage({type:'RESET'});g.vocal.parameters.get('mix').setTargetAtTime(0,g.context.currentTime,0.02);g.normalize.port.postMessage({type:'RESET',preserveGain:false});break;
-      case 'SET_VOCAL_CUT':g.vocal.parameters.get('mix').setTargetAtTime(payload.enabled?1:0,g.context.currentTime,0.02);break;
-      case 'SET_PRESET':g.vocal.port.postMessage({type,preset:payload.preset});break;
-      case 'SET_LOUDNESS_NORMALIZE':g.normalize.port.postMessage({type:'SET_ENABLED',enabled:payload.enabled});break;
-      case 'SET_PLAYER_VOLUME':g.normalize.port.postMessage({type,volume:payload.volume,muted:payload.muted});break;
+        this.key=0;g.pitch.port.postMessage({type:'RESET'});break;
       default:throw new Error('Unsupported audio command');
     }
   }
