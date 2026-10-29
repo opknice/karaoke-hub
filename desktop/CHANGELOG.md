@@ -1,5 +1,13 @@
 # Desktop releases
 
+## 0.1.2 — 2026-10-29
+
+Tempo +/- and Page Up/Down now change by one percentage point per operation. The toolbar displays percentages (normal = 100%); 125% increases to 126% or decreases to 124%. Existing 25%–200% limits remain, and reset returns directly to 100% without restarting the song.
+
+The native transport controls only the trusted Player's YouTube embed (including the initially empty `/embed/` document populated by the IFrame API), or explicit loopback test media. It verifies the actual HTML media playback rate and enables native pitch preservation. Commands are serialized to accumulate rapid requests and ignore late acknowledgements after Stop. No Extension, system capture, remote Node access or removed effects are added.
+
+Verification: 23 desktop tests and 70 repository tests passed, desktop lint passed, and the real Electron fixture measured preserved pitch at fractional speeds and checked exact 125% → 126%/124% media rates. The packaged app's hosted test read back those rates from an actual YouTube song and verified the stable percentage display. Independent review reported no Important/Critical findings; its Shift+Page Up/Down navigation note was reproduced in the real Electron test and fixed (RED→GREEN). Modified Page keys and active search editing retain their normal behavior.
+
 ## 0.1.1 — 2026-10-29
 
 Removed Vocal Cut and Auto Level at the user's request. Their toolbar buttons, effect commands, presets/feedback, AudioWorklet stages, compressor and packaged processor assets are removed. The hosted Player's legacy effect keyboard shortcuts are suppressed inside Electron. Pitch/key adjustment, YouTube-supported speed changes, reset, volume/mute and capture lifecycle remain.

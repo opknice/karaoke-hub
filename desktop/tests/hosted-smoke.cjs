@@ -18,6 +18,14 @@ async function wait(read,check,label,timeout=30000) {
     remote.on('pageerror',error=>console.error('Player error:',error.message));
     const state=async()=>(await shell.evaluate(()=>window.desktopPlayer.command('REQUEST_STATUS'))).state;
     await wait(state,s=>s?.playerReady,'Player handshake');
+    // This is an isolated persistent test profile; recover its own test songs
+    // after an interrupted previous run before locating the idle search input.
+    if(process.argv.includes('--play')) {
+      for(let n=0;n<10&&(await state()).currentVideoId;n++) {
+        await remote.evaluate(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'End',code:'End',bubbles:true,cancelable:true})));
+        await remote.waitForTimeout(700);
+      }
+    }
     await remote.getByRole('combobox').waitFor();
     if(process.argv.includes('--play')) {
       // Hydration/bridge readiness precedes asynchronous room creation.
@@ -34,8 +42,29 @@ async function wait(read,check,label,timeout=30000) {
       await shell.locator('#pitch-up').click();
       await wait(state,s=>s.pitchSemitones===1,'Real song key');
       await shell.locator('#tempo-up').click();
-      const actual=await wait(state,s=>s.playbackRate>1,'Real song tempo');
+      const actual=await wait(state,s=>s.playbackRate===1.01,'Real song 101 percent tempo');
       assert.ok(actual.outputRms>0.001);
+      const mediaRate=()=>app.evaluate(async({webContents})=>{
+        const player=webContents.getAllWebContents().find(w=>w.getURL().startsWith('https://karaoke-hub-nu.vercel.app/player'));
+        const frame=player.mainFrame.frames.find(f=>f.url.startsWith('https://www.youtube.com/embed/'));
+        return frame.executeJavaScript('document.querySelector("video").playbackRate');
+      });
+      assert.equal(await mediaRate(),1.01);
+      // Reach the requested example using real one-percent native operations.
+      for(let n=0;n<24;n++) {
+        const result=await shell.evaluate(()=>window.desktopPlayer.command('TEMPO_UP'));
+        assert.equal(result.ok,true,result.error);
+      }
+      await wait(state,s=>s.playbackRate===1.25,'Real song 125 percent');
+      await shell.locator('#tempo-up').click();
+      await wait(state,s=>s.playbackRate===1.26,'Real song 126 percent');
+      await remote.waitForTimeout(500);
+      assert.equal(await mediaRate(),1.26);
+      assert.equal((await state()).playbackRate,1.26);
+      assert.equal(await shell.locator('#rate').innerText(),'126%');
+      await shell.locator('#tempo-down').click();await wait(state,s=>s.playbackRate===1.25,'Real song 125 percent again');
+      await shell.locator('#tempo-down').click();await wait(state,s=>s.playbackRate===1.24,'Real song 124 percent');
+      assert.equal(await mediaRate(),1.24);
       await shell.locator('#reset').click();
       await wait(state,s=>s.playbackRate===1&&s.pitchSemitones===0,'Real song reset');
       // End only the song in this isolated test room using the normal Player shortcut.
@@ -47,7 +76,12 @@ async function wait(read,check,label,timeout=30000) {
     await shell.screenshot({path:path.resolve(__dirname,'../test-results/desktop-toolbar.png')});
     console.log('PASS hosted Player',process.argv.includes('--play')?'real song audio, key, tempo and reset':'boot and search input');
   } catch(error) {
-    if(remote)console.error('Hosted diagnostics:',(await remote.locator('body').innerText()).slice(-3500),await remote.evaluate(()=>window.__smokeMessages));
+    if(shell)console.error('Toolbar diagnostic:',await shell.locator('header').innerText(),await shell.locator('#message').innerText());
+    if(remote)console.error('Hosted diagnostics:',(await remote.locator('body').innerText()).slice(-1200),await remote.evaluate(()=>window.__smokeMessages?.slice(-8)));
+    console.error('Frame diagnostics:',await app.evaluate(async({webContents})=>{
+      const player=webContents.getAllWebContents().find(w=>w.getURL().startsWith('https://karaoke-hub-nu.vercel.app/player'));
+      return Promise.all(player.mainFrame.frames.map(async f=>({url:f.url,media:await f.executeJavaScript('Array.from(document.querySelectorAll("video,audio")).map(m=>({rate:m.playbackRate,ready:m.readyState}))').catch(()=>null)})));
+    }));
     throw error;
   } finally {await app.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

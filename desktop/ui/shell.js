@@ -5,12 +5,14 @@ function render(next=state) {
   const active=state.captureStatus==='capturing_original';
   const ready=active&&Boolean(state.currentVideoId);
   $('pitch').textContent=state.pitchSemitones>0?`+${state.pitchSemitones}`:String(state.pitchSemitones??0);
-  $('rate').textContent=`${(state.playbackRate??1).toFixed(2)}×`;
+  $('rate').textContent=`${Math.round((state.playbackRate??1)*100)}%`;
   $('audio').textContent=active?'หยุดระบบเสียง':state.captureStatus==='starting'?'กำลังเชื่อมต่อ…':'เปิดระบบเสียง';
   $('audio').disabled=busy||state.captureStatus==='starting'||!state.playerReady;
   for(const id of ['pitch-down','pitch-up','tempo-down','tempo-up','reset']) $(id).disabled=busy||!ready;
   $('pitch-down').disabled||=state.pitchSemitones<=-6;
   $('pitch-up').disabled||=state.pitchSemitones>=6;
+  $('tempo-down').disabled||=state.playbackRate<=0.25;
+  $('tempo-up').disabled||=state.playbackRate>=2;
   $('indicator').classList.toggle('on',active);
   $('status').textContent=state.playerError||state.lastError||(active?'ระบบเสียงพร้อม · ไม่ต้องใช้ Extension':state.playerReady?'พร้อมเล่น · เปิดระบบเสียงเพื่อปรับคีย์และความเร็ว':'กำลังเปิด Player…');
 }

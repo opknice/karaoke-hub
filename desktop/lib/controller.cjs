@@ -11,8 +11,8 @@ function initialState() {
   };
 }
 class DesktopAudioController {
-  constructor({ sendAudio, sendShortcut, publish, timeoutMs = 10000 }) {
-    this.sendAudio = sendAudio; this.sendShortcut = sendShortcut; this.publish = publish;
+  constructor({ sendAudio, setPlaybackRate, publish, timeoutMs = 10000 }) {
+    this.sendAudio = sendAudio; this.setPlaybackRate = setPlaybackRate; this.publish = publish;
     this.timeoutMs = timeoutMs; this.state = initialState(); this.generation = 0;
     this.queue = Promise.resolve();
   }
@@ -47,9 +47,6 @@ class DesktopAudioController {
   async disconnect() { return this.command('STOP_AUDIO'); }
   command(type, payload = {}) {
     if (!validateCommand(type, payload)) return Promise.resolve({ ok: false, error: 'คำสั่งหรือค่าที่ส่งมาไม่ถูกต้อง', state: this.state });
-    if (type === 'TEMPO_UP' || type === 'TEMPO_DOWN' || type === 'RESET_AUDIO') {
-      return this.transport(type).catch(error => ({ ok: false, error: error.message, state: this.state }));
-    }
     // Revoke synchronously, before an in-flight start or IPC reply can arrive.
     if (type === 'STOP_AUDIO') { this.generation++; this.deactivate('installed_idle'); }
     const scheduledGeneration = this.generation;
@@ -83,10 +80,16 @@ class DesktopAudioController {
         this.update({ captureStatus: 'capturing_original', supportsPitchPreservedTempo: true, lastError: null });
         return;
       }
-      case 'STOP_AUDIO': await this.audio('STOP_AUDIO'); return;
+      case 'STOP_AUDIO':
+        await this.sourceRate(1, true).catch(() => {});
+        await this.audio('STOP_AUDIO'); return;
       case 'TRACK_CHANGED': {
         if (payload.youtubeVideoId === this.state.currentVideoId) return;
-        if (this.active) await this.audio('RESET_TRACK');
+        if (this.active) {
+          await this.audio('RESET_TRACK');
+          // A source may still be loading; its normal load also defaults to 1x.
+          await this.sourceRate(1).catch(() => {});
+        }
         this.update({ currentVideoId: payload.youtubeVideoId, pitchSemitones: 0, playbackRate: 1,
           enabled: false, captureStatus: this.active ? 'capturing_original' : this.state.captureStatus });
         return;
@@ -102,28 +105,35 @@ class DesktopAudioController {
           throw new Error('เปิดระบบเสียงก่อนปรับความเร็ว');
         }
         await this.audio(type, payload); this.update({ playbackRate: payload.playbackRate }); return;
+      case 'TEMPO_UP': case 'TEMPO_DOWN':
+        await this.step(type === 'TEMPO_UP' ? 1 : -1); return;
+      case 'RESET_AUDIO':
+        if (!this.active || !this.state.currentVideoId) throw new Error('เปิดระบบเสียงและเลือกเพลงก่อน');
+        await this.audio('SET_PITCH', { semitones: 0 });
+        this.update({ pitchSemitones: 0 });
+        await this.sourceRate(1);
+        this.update({ playbackRate: 1 }); return;
     }
   }
-  async step(direction) {
-    if (!this.active || !this.state.currentVideoId) throw new Error('เปิดระบบเสียงและเลือกเพลงก่อนปรับความเร็ว');
-    const before = this.state.playbackRate;
+  async sourceRate(rate, allowInactive = false) {
     const generation = this.generation;
-    if (!await this.sendShortcut(direction === 'up' ? 'PageUp' : 'PageDown')) throw new Error('Player ยังไม่พร้อมปรับความเร็ว');
-    const deadline = Date.now() + 1500;
-    while (Date.now() < deadline && this.state.playbackRate === before && generation === this.generation) {
-      await new Promise(resolve => setTimeout(resolve, 20));
-    }
-    if (generation !== this.generation || !this.active) throw new Error('ระบบเสียงหยุดแล้ว');
-    if (this.state.playbackRate === before) throw new Error('เพลงนี้ไม่มีความเร็วระดับถัดไป');
+    let timer;
+    try {
+      const actual = await Promise.race([
+        this.setPlaybackRate(rate),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('เครื่องเล่นไม่ตอบกลับการปรับความเร็ว')), this.timeoutMs); }),
+      ]);
+      if (generation !== this.generation || (!allowInactive && !this.active)) throw new Error('ระบบเสียงหยุดแล้ว');
+      if (!Number.isFinite(actual) || Math.abs(actual - rate) > 1e-6) throw new Error('เครื่องเล่นไม่ยอมรับความเร็วที่เลือก');
+      return actual;
+    } finally { clearTimeout(timer); }
   }
-  async transport(type) {
-    if (type === 'RESET_AUDIO') {
-      const pitch = await this.command('SET_PITCH', { semitones: 0 });
-      if (!pitch.ok) return pitch;
-      for (let n = 0; this.state.playbackRate !== 1 && n < 16; n++) await this.step(this.state.playbackRate > 1 ? 'down' : 'up');
-      if (this.state.playbackRate !== 1) throw new Error('ไม่สามารถคืนความเร็วได้');
-    } else { await this.step(type === 'TEMPO_UP' ? 'up' : 'down'); }
-    return { ok: true, state: this.state };
+  async step(delta) {
+    if (!this.active || !this.state.currentVideoId) throw new Error('เปิดระบบเสียงและเลือกเพลงก่อนปรับความเร็ว');
+    const percent = Math.round(this.state.playbackRate * 100) + delta;
+    if (percent < 25 || percent > 200) throw new Error('ความเร็วต้องอยู่ระหว่าง 25% ถึง 200%');
+    const actual = await this.sourceRate(percent / 100);
+    this.update({ playbackRate: actual });
   }
 }
 module.exports = { DesktopAudioController };

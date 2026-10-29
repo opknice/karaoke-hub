@@ -13,7 +13,7 @@ const song=document.getElementById('song'),rates=[0.5,0.75,1,1.25,1.5,2];
 function post(type,payload={}){window.postMessage({source:'karaoke-hub-page',version:1,type,payload},location.origin);}
 window.addEventListener('message',e=>{if(e.source!==window||e.data?.source!=='karaoke-hub-vocal-cut-extension')return;if(e.data.type==='EXTENSION_READY')post('PLAYER_HELLO');});
 setInterval(()=>{post('PLAYER_HELLO');post('TRACK_CHANGED',{youtubeVideoId:'tone440aaaa'});},500);
-window.addEventListener('keydown',event=>{if(!['PageUp','PageDown'].includes(event.key))return;event.preventDefault();const i=rates.indexOf(song.playbackRate),next=rates[i+(event.key==='PageUp'?1:-1)];if(next){song.playbackRate=next;post('SET_PLAYBACK_RATE',{playbackRate:next});}});
+window.addEventListener('keydown',event=>{if(event.shiftKey||event.altKey||event.ctrlKey||event.metaKey||!['PageUp','PageDown'].includes(event.key))return;event.preventDefault();const i=rates.indexOf(song.playbackRate),next=rates[i+(event.key==='PageUp'?1:-1)];if(next){song.playbackRate=next;post('SET_PLAYBACK_RATE',{playbackRate:next});}});
 song.play().catch(()=>{});
 </script></body></html>`;
 const server=http.createServer((req,res)=>{
@@ -61,7 +61,25 @@ async function until(read,check,label,timeout=15000) {
       await until(state,s=>Math.abs(s.peakHz-hz)<9,`${key} semitone captured output`);
     }
     await page.locator('#tempo-up').click();
-    await until(state,s=>s.playbackRate===1.25&&Math.abs(s.peakHz-440)<9,'Native tempo preserves original key');
+    await until(state,s=>s.playbackRate===1.01&&Math.abs(s.peakHz-440)<9,'101 percent preserves original key');
+    assert.equal(await page.locator('#rate').innerText(),'101%');
+    await remote.evaluate(()=>{
+      document.querySelector('audio').playbackRate=1.25;
+      window.postMessage({source:'karaoke-hub-page',version:1,type:'SET_PLAYBACK_RATE',payload:{playbackRate:1.25}},location.origin);
+    });
+    await until(state,s=>s.playbackRate===1.25,'125 percent starting rate');
+    await page.locator('#tempo-up').click();
+    await until(state,s=>s.playbackRate===1.26&&Math.abs(s.peakHz-440)<9,'125 to 126 percent');
+    assert.equal(await remote.evaluate(()=>document.querySelector('audio').playbackRate),1.26);
+    assert.equal(await page.locator('#rate').innerText(),'126%');
+    await page.locator('#tempo-down').click();await until(state,s=>s.playbackRate===1.25,'126 to 125');
+    await page.locator('#tempo-down').click();await until(state,s=>s.playbackRate===1.24,'125 to 124');
+    assert.equal(await remote.evaluate(()=>document.querySelector('audio').playbackRate),1.24);
+    await remote.evaluate(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'PageUp',code:'PageUp',bubbles:true,cancelable:true})));
+    await until(state,s=>s.playbackRate===1.25,'Page Up uses one percent');
+    await remote.evaluate(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'PageUp',code:'PageUp',shiftKey:true,bubbles:true,cancelable:true})));
+    await remote.waitForTimeout(300);
+    assert.equal((await state()).playbackRate,1.25,'Shift+Page Up must not alter tempo');
     await page.locator('#pitch-up').click();
     await until(state,s=>s.pitchSemitones===1&&Math.abs(s.peakHz-466.164)<9,'Independent tempo and pitch');
     await page.locator('#reset').click();
@@ -75,6 +93,6 @@ async function until(read,check,label,timeout=15000) {
     const denied=await page.evaluate(()=>window.desktopPlayer.command('SET_PITCH',{semitones:Infinity}));assert.equal(denied.ok,false);
     await page.locator('#reload').click();
     await until(state,s=>s.playerReady&&s.captureStatus==='installed_idle','Reload revokes audio');
-    console.log('PASS Electron: pitch/tempo only, removed effects unavailable, real capture, key/rate/reset, stop/restart, validation, reload');
+    console.log('PASS Electron: exact 125→126/124 percent media rates, 1% keyboard, pitch preservation, key/reset, removed effects, stop/restart, validation, reload');
   } finally {await app?.close();await new Promise(resolve=>server.close(resolve));}
 })().catch(error=>{console.error(error);process.exitCode=1;});

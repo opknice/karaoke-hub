@@ -4,10 +4,10 @@ Electron app targeting Windows 10 and Windows 11 **x64**. The local toolbar adds
 
 ## Install and use
 
-Build output: `dist/KaraokeHub-Setup-0.1.1-x64.exe`. Run the installer, open KARAOKE.HUB, select a song in the normal Player, then click **เปิดระบบเสียง**. The unpacked executable is `dist/win-unpacked/KARAOKE.HUB.exe`; keep its adjacent files together.
+Build output: `dist/KaraokeHub-Setup-0.1.2-x64.exe`. Run the installer, open KARAOKE.HUB, select a song in the normal Player, then click **เปิดระบบเสียง**. The unpacked executable is `dist/win-unpacked/KARAOKE.HUB.exe`; keep its adjacent files together.
 
 - Key: -6 to +6 semitones, one semitone per click.
-- Speed: previous/next YouTube-supported rate; the toolbar shows the rate acknowledged by the Player. Page Up/Down also work in the Player when not editing search.
+- Tempo: one percentage point per click, for example 125% → 126% or 125% → 124%, within 25%–200%. The normal rate is 100%. Page Up/Down use the same one-percent step when not editing search. The app sets the trusted Player's HTML media rate directly and verifies the accepted rate instead of jumping through YouTube's discrete API presets.
 - **คืนค่าเดิม** resets key and tempo without restarting the song.
 - **หยุดระบบเสียง** releases capture and returns audio playback to the original Player.
 - Key resets when the video changes. Audio settings are local and not written to the room database.
@@ -28,7 +28,7 @@ npm run test:hosted
 npm run dist
 ```
 
-`test:electron` launches the real app against a local, stereo 440 Hz WAV fixture. It checks selective capture, measured output frequencies, native pitch-preserving speed changes, reset, removed effect buttons/commands/shortcuts, stop/restart, invalid parameters and reload. `test:hosted` checks production Player boot/search input; `node tests/hosted-smoke.cjs --play` additionally uses an isolated test room, selects a real catalog song and tests non-silent YouTube playback with key/tempo changes.
+`test:electron` launches the real app against a local, stereo 440 Hz WAV fixture. It checks selective capture, measured output frequencies, exact 125% → 126%/124% native media rates, percentage display, one-percent keyboard steps, pitch preservation, reset, removed effect buttons/commands/shortcuts, stop/restart, invalid parameters and reload. `test:hosted` checks production Player boot/search input; `node tests/hosted-smoke.cjs --play` additionally uses an isolated test room, selects a real catalog song and reads back actual YouTube media rates while testing key/tempo changes.
 
 For local web development only:
 

@@ -3,13 +3,14 @@ const path=require('node:path');
 const {pathToFileURL}=require('node:url');
 const {DesktopAudioController}=require('./lib/controller.cjs');
 const {resolvePlayerUrl,isPlayerUrl}=require('./lib/policy.cjs');
+const {setMediaPlaybackRate}=require('./lib/media-tempo.cjs');
 
 protocol.registerSchemesAsPrivileged([{scheme:'karaoke-app',privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true,stream:true}}]);
 app.commandLine.appendSwitch('autoplay-policy','no-user-gesture-required');
 if(process.env.KARAOKE_USER_DATA) app.setPath('userData',path.resolve(process.env.KARAOKE_USER_DATA));
 let window,player,audioWindow,controller,hostReady;
 let nextId=0;
-const audioRequests=new Map(),shortcutRequests=new Map();
+const audioRequests=new Map();
 const playerUrl=resolvePlayerUrl(process.env.KARAOKE_PLAYER_URL);
 const localOrigin='karaoke-app://app';
 const isLocal=(url,entry)=>url===`${localOrigin}/${entry}`;
@@ -54,10 +55,6 @@ async function sendAudio(type,payload,generation) {
   return request(audioRequests,id=>audioWindow.webContents.executeJavaScript(
     `window.dispatchEvent(new CustomEvent('audio-command',{detail:${JSON.stringify({id,type,payload,generation})}}))`,true));
 }
-async function sendShortcut(key) {
-  if(!player||player.webContents.isDestroyed()||!isPlayerUrl(player.webContents.getURL(),playerUrl)) return false;
-  return request(shortcutRequests,id=>player.webContents.send('player-shortcut',{id,key}),2000);
-}
 function resizePlayer() {
   if(!window||window.isDestroyed()) return;
   const [width,height]=window.getContentSize();
@@ -94,11 +91,11 @@ app.whenReady().then(async()=>{
   restrictNavigation(window.webContents,url=>isLocal(url,'ui/index.html'));
   restrictNavigation(audioWindow.webContents,url=>isLocal(url,'audio/index.html'));
   restrictNavigation(player.webContents,url=>isPlayerUrl(url,playerUrl));
-  controller=new DesktopAudioController({sendAudio,sendShortcut,publish});
+  controller=new DesktopAudioController({sendAudio,setPlaybackRate:rate=>setMediaPlaybackRate(player.webContents,playerUrl,rate),publish});
   ipcMain.handle('player-command',(event,message)=>{
     if(!validSender(event,player.webContents,url=>isPlayerUrl(url,playerUrl))) return {ok:false,error:'Untrusted Player'};
     // Only the existing web bridge commands are accepted from remote content.
-    if(!['PLAYER_HELLO','REQUEST_STATUS','TRACK_CHANGED','SET_PLAYBACK_RATE','SET_PLAYER_VOLUME'].includes(message?.type)) return {ok:false,error:'Unsupported Player command'};
+    if(!['PLAYER_HELLO','REQUEST_STATUS','TRACK_CHANGED','SET_PLAYBACK_RATE','SET_PLAYER_VOLUME','TEMPO_UP','TEMPO_DOWN'].includes(message?.type)) return {ok:false,error:'Unsupported Player command'};
     if(message.type==='PLAYER_HELLO') controller.update({playerReady:true,playerError:null});
     return controller.command(message.type,message.payload);
   });
@@ -113,15 +110,12 @@ app.whenReady().then(async()=>{
   ipcMain.on('audio-event',(event,{patch,generation}={})=>{
     if(validSender(event,audioWindow.webContents,url=>isLocal(url,'audio/index.html'))&&patch&&typeof patch==='object') controller.audioEvent(patch,generation);
   });
-  ipcMain.on('shortcut-reply',(event,{id,handled}={})=>{
-    if(validSender(event,player.webContents,url=>isPlayerUrl(url,playerUrl))) settle(shortcutRequests,id,handled===true);
-  });
   player.webContents.on('did-start-navigation',(_event,_url,_inPlace,isMainFrame)=>{if(isMainFrame){void controller.disconnect();controller.update({currentVideoId:null,playerReady:false});}});
   player.webContents.on('did-finish-load',()=>controller.update({playerReady:true,playerError:null}));
   player.webContents.on('did-fail-load',(_event,code,description,_url,isMainFrame)=>{
     if(isMainFrame&&code!==-3) controller.update({playerReady:false,playerError:`โหลด Player ไม่สำเร็จ (${description})`});
   });
-  player.webContents.on('render-process-gone',()=>{void controller.disconnect();controller.update({playerReady:false,playerError:'Player หยุดทำงาน กดโหลดใหม่'});rejectPending(shortcutRequests,'Player stopped');});
+  player.webContents.on('render-process-gone',()=>{void controller.disconnect();controller.update({playerReady:false,playerError:'Player หยุดทำงาน กดโหลดใหม่'});});
   audioWindow.webContents.on('render-process-gone',()=>{
     rejectPending(audioRequests,'ระบบเสียงหยุดทำงาน');controller.generation++;controller.deactivate('error','ระบบเสียงหยุดทำงาน กรุณาเปิดใหม่');
     hostReady=audioWindow.loadURL(`${localOrigin}/audio/index.html`);
@@ -137,4 +131,4 @@ app.whenReady().then(async()=>{
   window.on('closed',()=>{player.webContents.close();audioWindow.destroy();app.quit();});
 }).catch(error=>{console.error(error);app.exit(1);});
 app.on('window-all-closed',()=>app.quit());
-app.on('before-quit',()=>{rejectPending(audioRequests,'App closed');rejectPending(shortcutRequests,'App closed');});
+app.on('before-quit',()=>{rejectPending(audioRequests,'App closed');});

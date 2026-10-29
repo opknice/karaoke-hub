@@ -21,11 +21,12 @@ test('IPC rejects nonfinite, coerced and out-of-range audio parameters', () => {
   assert.equal(validateCommand('TRACK_CHANGED', { youtubeVideoId: null }), true);
   assert.equal(validateCommand('EXECUTE_JAVASCRIPT', { code: 'anything' }), false);
 });
-function setup(sendAudio = async () => ({ ok: true })) {
+function setup(sendAudio = async () => ({ ok: true }), setPlaybackRate = async rate => rate) {
   const audio = [];
   const controller = new DesktopAudioController({
     sendAudio: async (type, payload, generation) => { audio.push({ type, payload, generation }); return sendAudio(type, payload, generation); },
     sendShortcut: async () => false,
+    setPlaybackRate,
     publish: () => {}, timeoutMs: 40,
   });
   return { controller, audio };
@@ -108,4 +109,54 @@ test('removed Vocal Cut and Auto Level commands cannot reach the audio host', as
   assert.equal(audio.length,0);
   assert.equal(controller.state.supportsLoudnessNormalize,false);
   assert.equal(controller.state.captureStatus,'capturing_original');
+});
+test('tempo changes by one percentage point: 125 to 126 and 125 to 124', async () => {
+  const {controller}=setup();
+  await controller.command('START_AUDIO');
+  await controller.command('TRACK_CHANGED',{youtubeVideoId:'abcdefghijk'});
+  await controller.command('SET_PLAYBACK_RATE',{playbackRate:1.25});
+  assert.equal((await controller.command('TEMPO_UP')).ok,true);
+  assert.equal(controller.state.playbackRate,1.26);
+  await controller.command('SET_PLAYBACK_RATE',{playbackRate:1.25});
+  assert.equal((await controller.command('TEMPO_DOWN')).ok,true);
+  assert.equal(controller.state.playbackRate,1.24);
+});
+test('rapid tempo clicks accumulate and reset returns directly to 100 percent', async () => {
+  const applied=[];
+  const {controller}=setup(undefined,async rate=>{applied.push(rate);await new Promise(r=>setImmediate(r));return rate;});
+  await controller.command('START_AUDIO');
+  await controller.command('TRACK_CHANGED',{youtubeVideoId:'abcdefghijk'});
+  await controller.command('SET_PLAYBACK_RATE',{playbackRate:1.25});
+  await Promise.all([controller.command('TEMPO_UP'),controller.command('TEMPO_UP')]);
+  assert.equal(controller.state.playbackRate,1.27);
+  await controller.command('RESET_AUDIO');
+  assert.equal(controller.state.playbackRate,1);
+  assert.equal(applied.at(-1),1);
+});
+test('tempo limits reject another step and rejected native rates are not advertised', async () => {
+  const {controller}=setup(undefined,async()=>1.25);
+  await controller.command('START_AUDIO');
+  await controller.command('TRACK_CHANGED',{youtubeVideoId:'abcdefghijk'});
+  await controller.command('SET_PLAYBACK_RATE',{playbackRate:2});
+  assert.equal((await controller.command('TEMPO_UP')).ok,false);
+  assert.equal(controller.state.playbackRate,2);
+  await controller.command('SET_PLAYBACK_RATE',{playbackRate:0.25});
+  assert.equal((await controller.command('TEMPO_DOWN')).ok,false);
+  await controller.command('SET_PLAYBACK_RATE',{playbackRate:1.25});
+  assert.equal((await controller.command('TEMPO_UP')).ok,false);
+  assert.equal(controller.state.playbackRate,1.25);
+});
+test('a late native tempo acknowledgement cannot change a stopped session', async () => {
+  let finish;
+  const {controller}=setup(undefined,rate=>rate===1.26?new Promise(resolve=>{finish=resolve;}):Promise.resolve(rate));
+  await controller.command('START_AUDIO');
+  await controller.command('TRACK_CHANGED',{youtubeVideoId:'abcdefghijk'});
+  await controller.command('SET_PLAYBACK_RATE',{playbackRate:1.25});
+  const tempo=controller.command('TEMPO_UP');
+  await new Promise(resolve=>setImmediate(resolve));
+  const stopping=controller.command('STOP_AUDIO');finish(1.26);
+  assert.equal((await tempo).ok,false);
+  await stopping;
+  assert.equal(controller.state.playbackRate,1);
+  assert.equal(controller.state.captureStatus,'installed_idle');
 });
