@@ -2,3 +2,5 @@ node_modules/
 dist/
 audio/assets/
 test-results/
+__pycache__/
+vocal/runtime/
