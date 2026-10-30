@@ -6,7 +6,7 @@ const {resolvePlayerUrl,isPlayerUrl,validateCommand}=require('./lib/policy.cjs')
 const {setMediaPlaybackRate}=require('./lib/media-tempo.cjs');
 const {VocalWorker}=require('./lib/vocal-worker.cjs');
 const {VocalVideo}=require('./lib/vocal-video.cjs');
-const {LiveVocalCoordinator}=require('./lib/vocal-coordinator.cjs');
+const {ContinuousVocalCoordinator}=require('./lib/continuous-vocal-coordinator.cjs');
 const {getVocalModel}=require('./lib/vocal-models.cjs');
 const {VocalModelSettings}=require('./lib/vocal-model-settings.cjs');
 
@@ -113,8 +113,10 @@ app.whenReady().then(async()=>{
   const settings=new VocalModelSettings(path.join(app.getPath('userData'),'vocal-settings.json'));
   const selectedModel=settings.read();
   const modelPaths=id=>({python:path.join(vocalRoot,'runtime/python/python.exe'),worker:path.join(vocalRoot,'worker.py'),model:path.join(vocalRoot,'runtime',getVocalModel(id).filename)});
-  controller=new DesktopAudioController({sendAudio,setPlaybackRate:rate=>setMediaPlaybackRate(player.webContents,playerUrl,rate),publish,initialModelId:selectedModel,
-    setVocal:(enabled,options)=>enabled?vocal.start():vocal.stop(options),
+  controller=new DesktopAudioController({sendAudio,setPlaybackRate:rate=>setMediaPlaybackRate(player.webContents,playerUrl,rate),publish,initialModelId:selectedModel,supportsContinuousVocal:true,
+    setVocal:enabled=>vocal.setRemoval(enabled),
+    suspendVocal:()=>vocal.suspendAi(),closePlayback:options=>vocal.stopSession(options),attachVocalVideo:()=>vocal.attachVideo(),
+    preparePlayback:track=>vocal.prepare({...track,origin:new URL(playerUrl).origin}),
     selectVocalModel:id=>{
       controller.update({vocalPreferenceError:null});
       try{settings.write(id);}catch{controller.update({vocalPreferenceError:'บันทึกโหมดไว้ใช้ครั้งหน้าไม่สำเร็จ'});}
@@ -122,16 +124,17 @@ app.whenReady().then(async()=>{
     },
   });
   vocalWorker=new VocalWorker({profile:getVocalModel(selectedModel),paths:modelPaths(selectedModel),
-    onReady:details=>void controller.vocalModelReady(details),
+    onReady:details=>void vocal.beginAi().then(()=>controller.vocalModelReady(details)),
     onResult:packet=>vocal.result(packet),
     onFailure:failure=>{
       if(failure.fatal){console.warn('Vocal runtime:',failure.message);controller.vocalModelFailed(vocalRuntimeError(failure.message),vocalWorker.profile.id);}
-      if(vocal.enabled)void vocal.failure(failure.message,failure.epoch);
+      if(vocal.active)void vocal.failure(failure.message,failure.epoch);
     },
   });
-  vocal=new LiveVocalCoordinator({worker:vocalWorker,video:new VocalVideo(player.webContents,playerUrl),
+  vocal=new ContinuousVocalCoordinator({worker:vocalWorker,video:new VocalVideo(player.webContents,playerUrl),
     getProfile:()=>getVocalModel(controller.state.vocalModelId),
-    getTrack:()=>({videoId:controller.state.currentVideoId,queueItemId:controller.state.currentQueueItemId,versionType:controller.state.currentVersionType,active:controller.active,origin:new URL(playerUrl).origin}),
+    ensureCapture:configuration=>controller.ensureBufferedCapture(configuration),
+    getTrack:()=>({videoId:controller.state.currentVideoId,queueItemId:controller.state.currentQueueItemId,versionType:controller.state.currentVersionType,active:controller.active,playing:controller.state.vocalPlaybackPlaying,origin:new URL(playerUrl).origin}),
     sendAudio:(type,payload)=>controller.audio(type,payload),
     sendResult:packet=>{if(!audioWindow.webContents.isDestroyed())audioWindow.webContents.send('vocal-result',packet);},
     publish:patch=>controller.update(patch),
@@ -140,14 +143,16 @@ app.whenReady().then(async()=>{
   controller.update({vocalRuntimeStatus:'loading'});
   ipcMain.handle('player-command',(event,message)=>{
     if(!validSender(event,player.webContents,url=>isPlayerUrl(url,playerUrl))) return {ok:false,error:'Untrusted Player'};
-    // Only the existing web bridge commands are accepted from remote content.
-    if(!['PLAYER_HELLO','REQUEST_STATUS','TRACK_CHANGED','SET_PLAYBACK_RATE','SET_PLAYER_VOLUME','TEMPO_UP','TEMPO_DOWN','SET_SEARCH_VERSION','VOCAL_PLAYBACK_STATE'].includes(message?.type)) return {ok:false,error:'Unsupported Player command'};
+    // Fixed track preparation grants capture of this trusted Player only; no model/path controls.
+    if(!['PLAYER_HELLO','REQUEST_STATUS','TRACK_CHANGED','PREPARE_PLAYER_TRACK','SET_PLAYBACK_RATE','SET_PLAYER_VOLUME','TEMPO_UP','TEMPO_DOWN','SET_SEARCH_VERSION','VOCAL_PLAYBACK_STATE'].includes(message?.type)) return {ok:false,error:'Unsupported Player command'};
     if(message.type==='VOCAL_PLAYBACK_STATE'){
       if(!validateCommand(message.type,message.payload))return {ok:false,error:'Invalid playback state'};
       const p=message.payload;
       void controller.vocalPlaybackState(p);
-      if(vocal.enabled&&p.youtubeVideoId===controller.state.currentVideoId&&p.queueItemId===controller.state.currentQueueItemId)
-        void vocal.transport({epoch:vocal.epoch,token:vocal.token,kind:p.playing?'play':'pause',paused:!p.playing});
+      if(vocal.active&&p.youtubeVideoId===controller.state.currentVideoId&&p.queueItemId===controller.state.currentQueueItemId){
+        const epoch=vocal.sessionEpoch,token=vocal.token;
+        void(async()=>{if(p.mediaReady)await vocal.attachVideo();await vocal.transport({epoch,token,kind:p.playing?'play':'pause',paused:!p.playing});})().catch(error=>console.warn('Playback transport:',error.message));
+      }
       return {ok:true,state:controller.state};
     }
     if(message.type==='PLAYER_HELLO') controller.update({playerReady:true,playerError:null});
@@ -168,7 +173,7 @@ app.whenReady().then(async()=>{
   });
   ipcMain.on('audio-event',(event,{patch,generation}={})=>{
     if(validSender(event,audioWindow.webContents,url=>isLocal(url,'audio/index.html'))&&patch&&typeof patch==='object') {
-      if(patch.vocalEpoch!==undefined){if(generation===controller.generation)vocal.audioState(patch);}
+      if(patch.continuousSessionId!==undefined||patch.vocalEpoch!==undefined){if(generation===controller.generation)vocal.audioState(patch);}
       else controller.audioEvent(patch,generation);
     }
   });
@@ -188,6 +193,7 @@ app.whenReady().then(async()=>{
   audioWindow.webContents.on('render-process-gone',()=>{
     rejectPending(audioRequests,'ระบบเสียงหยุดทำงาน');controller.generation++;controller.deactivate('error','ระบบเสียงหยุดทำงาน กรุณาเปิดใหม่');
     void controller.revokeVocal();
+    void controller.endPlayback({restorePosition:false});
     hostReady=audioWindow.loadURL(`${localOrigin}/audio/index.html`);
   });
   hostReady=audioWindow.loadURL(`${localOrigin}/audio/index.html`);

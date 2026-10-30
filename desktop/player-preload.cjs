@@ -1,4 +1,5 @@
-const {ipcRenderer}=require('electron');
+const {ipcRenderer,contextBridge}=require('electron');
+contextBridge.exposeInMainWorld('karaokeDesktop',Object.freeze({continuousVocal:true}));
 const PAGE='karaoke-hub-page',EXTENSION='karaoke-hub-vocal-cut-extension';
 let vocalBridge=null;
 ipcRenderer.on('vocal-bridge',(_event,configuration)=>{vocalBridge=configuration;});

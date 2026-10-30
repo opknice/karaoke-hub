@@ -16,13 +16,16 @@ function initialState(profile) {
   };
 }
 class DesktopAudioController {
-  constructor({ sendAudio, setPlaybackRate, publish, setVocal=async enabled=>{if(enabled)throw new Error('ระบบ AI ยังไม่พร้อม');},selectVocalModel=()=>{throw new Error('Model selection unavailable');},initialModelId='fast', timeoutMs = 10000 }) {
+  constructor({ sendAudio, setPlaybackRate, publish, setVocal=async enabled=>{if(enabled)throw new Error('ระบบ AI ยังไม่พร้อม');},selectVocalModel=()=>{throw new Error('Model selection unavailable');},initialModelId='fast', timeoutMs = 10000,
+    supportsContinuousVocal=false,preparePlayback=null,closePlayback=async()=>{},suspendVocal=async()=>{},attachVocalVideo=async()=>{} }) {
     this.sendAudio = sendAudio; this.setPlaybackRate = setPlaybackRate; this.publish = publish;
     this.setVocal=setVocal;
     this.selectVocalModel=selectVocalModel;
     this.timeoutMs = timeoutMs; this.state = initialState(getVocalModel(initialModelId)); this.generation = 0;
     this.modelSelectionGeneration=0;this.requestedModelId=initialModelId;this.modelSwitchIntent=false;this.pendingVocalResume=null;
     this.queue = Promise.resolve();
+    Object.assign(this,{preparePlayback,closePlayback,suspendVocal,attachVocalVideo});this.userStoppedAudio=false;
+    if(supportsContinuousVocal)this.state.supportsContinuousVocal=true;
   }
   update(patch) { this.state = { ...this.state, ...patch }; this.publish(this.state); }
   get active() { return this.state.captureStatus === 'capturing_original'; }
@@ -80,19 +83,39 @@ class DesktopAudioController {
     try{this.vocalStopping=Promise.resolve(this.setVocal(false,options)).catch(()=>{});}catch{this.vocalStopping=Promise.resolve();}
     return this.vocalStopping;
   }
+  endPlayback(options={}){try{this.playbackStopping=Promise.resolve(this.closePlayback(options)).catch(()=>{});}catch{this.playbackStopping=Promise.resolve();}return this.playbackStopping;}
+  async ensureBufferedCapture(configuration){
+    const videoId=this.state.currentVideoId,queueItemId=this.state.currentQueueItemId;
+    const generation=this.active?this.generation:++this.generation;
+    try{
+      if(!this.active){this.update({captureStatus:'starting',lastError:null});await this.audio('START_AUDIO',{...configuration,buffered:true},generation);}
+      else await this.audio('PREPARE_VOCAL_SESSION',configuration,generation);
+      if(generation!==this.generation||videoId!==this.state.currentVideoId||queueItemId!==this.state.currentQueueItemId)throw Object.assign(new Error('ยกเลิกการเตรียมเพลงแล้ว'),{name:'AbortError'});
+      this.update({captureStatus:'capturing_original',supportsPitchPreservedTempo:true,lastError:null});
+    }catch(error){
+      if(generation===this.generation){this.generation++;this.deactivate('error',error.message);void this.audio('STOP_AUDIO').catch(()=>{});}
+      throw error;
+    }
+  }
+  async prepareCurrentPlayback(){
+    if(!this.preparePlayback||this.userStoppedAudio||this.state.currentVersionType!=='mv'||!this.state.currentQueueItemId)return;
+    if(this.state.vocalBufferActive)return{buffered:true,sessionId:this.state.continuousSessionId};
+    return this.preparePlayback({videoId:this.state.currentVideoId,queueItemId:this.state.currentQueueItemId,versionType:'mv',playing:this.state.vocalPlaybackPlaying});
+  }
   audioEvent(patch, generation) {
     if (generation !== this.generation) return;
     if (patch.captureStatus === 'error' || patch.captureStatus === 'installed_idle') {
       this.generation++;
       this.deactivate(patch.captureStatus, patch.lastError);
       void this.revokeVocal();
+      void this.endPlayback({restorePosition:false});
       void this.audio('STOP_AUDIO').catch(() => {});
       return;
     }
     if (this.active && patch.vocalEpoch===undefined) this.update(patch);
   }
-  async disconnect() { return this.command('STOP_AUDIO'); }
-  command(type, payload = {}) {
+  async disconnect() { return this.command('STOP_AUDIO',{}, {automatic:true}); }
+  command(type, payload = {},{automatic=false}={}) {
     if (!validateCommand(type, payload)) return Promise.resolve({ ok: false, error: 'คำสั่งหรือค่าที่ส่งมาไม่ถูกต้อง', state: this.state });
     if(type==='SET_VOCAL_REMOVER')this.cancelVocalResume();
     if(type==='TRACK_CHANGED'&&(payload.youtubeVideoId!==this.state.currentVideoId||(payload.queueItemId??null)!==this.state.currentQueueItemId
@@ -103,7 +126,13 @@ class DesktopAudioController {
     }
     const modelSelection=this.modelSelectionGeneration;
     // Revoke synchronously, before an in-flight start or IPC reply can arrive.
-    if (type === 'STOP_AUDIO') { this.generation++; this.deactivate('installed_idle');void this.revokeVocal(); }
+    if(type==='START_AUDIO')this.userStoppedAudio=false;
+    if (type === 'STOP_AUDIO') {
+      if(!automatic)this.userStoppedAudio=true;
+      const wasStarting=this.state.captureStatus==='starting';
+      this.generation++; this.deactivate('installed_idle');void this.revokeVocal();void this.endPlayback({restorePosition:true});
+      if(wasStarting&&this.state.supportsContinuousVocal)void this.audio('STOP_AUDIO').catch(()=>{});
+    }
     const scheduledGeneration = this.generation;
     const job = async () => {
       try {
@@ -126,6 +155,9 @@ class DesktopAudioController {
   async apply(type, payload,context={}) {
     switch (type) {
       case 'PLAYER_HELLO': case 'REQUEST_STATUS': return;
+      case 'PREPARE_PLAYER_TRACK':
+        await this.apply('TRACK_CHANGED',payload,context);
+        await this.prepareCurrentPlayback();return;
       case 'SET_SEARCH_VERSION': this.update({ searchVersion: payload.version }); return;
       case 'SET_VOCAL_MODEL': {
         if(context.modelSelection!==this.modelSelectionGeneration)return;
@@ -133,6 +165,7 @@ class DesktopAudioController {
         if(profile.id===this.state.vocalModelId&&this.state.vocalRuntimeStatus!=='error')return;
         if(this.state.vocalRemoverStatus==='paused')this.update({vocalPlaybackPlaying:false});
         await this.revokeVocal({restorePosition:true});
+        await this.suspendVocal();
         if(context.modelSelection!==this.modelSelectionGeneration)return;
         this.update({vocalModelId:profile.id,vocalRemoverDelayMs:profile.delayMs,vocalRemoverEnabled:false,vocalRemoverReady:false,
           vocalRemoverStatus:'unavailable',vocalRuntimeStatus:'loading',vocalRuntimeError:null,vocalRemoverError:null,vocalResumePending:Boolean(this.modelSwitchIntent)});
@@ -142,13 +175,14 @@ class DesktopAudioController {
       case 'SET_VOCAL_REMOVER':
         if(payload.enabled&&this.state.vocalRemoverEnabled)return;
         if(payload.enabled){
-          if(!this.state.vocalRemoverReady)throw new Error(this.state.vocalRuntimeError||'ระบบ AI ยังไม่พร้อมใช้งาน');
+          if(!this.state.vocalRemoverReady&&!(this.state.supportsContinuousVocal&&this.state.vocalBufferActive&&this.state.vocalRuntimeStatus!=='error'))throw new Error(this.state.vocalRuntimeError||'ระบบ AI ยังไม่พร้อมใช้งาน');
           if(!this.active)throw new Error('เปิดระบบเสียงก่อนใช้ Vocal Remover');
           if(!this.state.vocalRemoverEligible||!this.state.currentQueueItemId)throw new Error('Vocal Remover ใช้ได้เฉพาะเพลง MV ที่กำลังเล่น');
         }
         await this.setVocal(payload.enabled,{restorePosition:true});
         this.update({vocalRemoverEnabled:payload.enabled,vocalRemoverStatus:payload.enabled?'preparing':this.state.vocalRemoverReady?'ready':'unavailable',vocalRemoverError:null});return;
       case 'START_AUDIO': {
+        if(this.preparePlayback&&this.state.currentVersionType==='mv'&&!this.state.vocalBufferActive){await this.prepareCurrentPlayback();if(this.state.vocalPlaybackPlaying!==false)await this.attachVocalVideo();return;}
         if (this.active) return;
         const generation = ++this.generation;
         this.update({ captureStatus: 'starting', lastError: null });
@@ -159,6 +193,7 @@ class DesktopAudioController {
       }
       case 'STOP_AUDIO':
         await this.vocalStopping;
+        await this.playbackStopping;
         await this.sourceRate(1, true).catch(() => {});
         await this.audio('STOP_AUDIO'); return;
       case 'TRACK_CHANGED': {
@@ -167,6 +202,7 @@ class DesktopAudioController {
         if (payload.youtubeVideoId === this.state.currentVideoId && queueItemId === this.state.currentQueueItemId && versionType === this.state.currentVersionType) return;
         this.cancelVocalResume();
         await this.revokeVocal({restorePosition:false});
+        await this.endPlayback({restorePosition:false});
         if (this.active) {
           await this.audio('RESET_TRACK');
           // A source may still be loading; its normal load also defaults to 1x.

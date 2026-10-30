@@ -39,8 +39,8 @@ export class AudioEngine {
         if(this.graph!==graph)return;
         if(data?.type==='continuous-state'){
           if(!graph.sessionEpoch||data.sessionEpoch!==graph.sessionEpoch)return;
-          if(data.kind==='session')report({continuousSessionId:graph.sessionId,vocalBufferActive:data.status!=='off',vocalBufferStatus:data.status,vocalPlaybackDelayMs:8000});
-          if(data.kind==='ai'&&graph.vocalEpoch&&data.epoch===graph.vocalEpoch)report({continuousSessionId:graph.sessionId,vocalEpoch:data.epoch,vocalAiStatus:data.status,vocalAiError:data.error??null});
+          if(data.kind==='session')report({continuousSessionId:graph.sessionId,vocalSessionEpoch:graph.sessionEpoch,vocalBufferActive:data.status!=='off',vocalBufferStatus:data.status,vocalPlaybackDelayMs:8000});
+          if(data.kind==='ai'&&graph.vocalEpoch&&data.epoch===graph.vocalEpoch)report({continuousSessionId:graph.sessionId,vocalSessionEpoch:graph.sessionEpoch,vocalEpoch:data.epoch,vocalAiStatus:data.status,vocalAiError:data.error??null});
           return;
         }
         if(!graph.vocalEpoch||data?.epoch!==graph.vocalEpoch||(graph.sessionEpoch&&data.sessionEpoch!==graph.sessionEpoch))return;

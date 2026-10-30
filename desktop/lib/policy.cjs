@@ -25,8 +25,10 @@ function validateCommand(type, payload = {}) {
     case 'SET_SEARCH_VERSION': return payload.version === 'karaoke' || payload.version === 'mv';
     case 'SET_VOCAL_REMOVER': return typeof payload.enabled === 'boolean';
     case 'SET_VOCAL_MODEL': return Object.keys(payload).length===1&&(payload.modelId==='fast'||payload.modelId==='hq5');
+    case 'PREPARE_PLAYER_TRACK': return Object.keys(payload).length===3&&typeof payload.youtubeVideoId==='string'&&/^[\w-]{11}$/.test(payload.youtubeVideoId)
+      &&typeof payload.queueItemId==='string'&&payload.queueItemId.length>0&&payload.queueItemId.length<=128&&(payload.versionType==='mv'||payload.versionType==='karaoke');
     case 'VOCAL_PLAYBACK_STATE': return typeof payload.playing==='boolean'&&typeof payload.youtubeVideoId==='string'&&/^[\w-]{11}$/.test(payload.youtubeVideoId)
-      &&typeof payload.queueItemId==='string'&&payload.queueItemId.length>0&&payload.queueItemId.length<=128;
+      &&typeof payload.queueItemId==='string'&&payload.queueItemId.length>0&&payload.queueItemId.length<=128&&(payload.mediaReady===undefined||typeof payload.mediaReady==='boolean');
     case 'TRACK_CHANGED': return (payload.youtubeVideoId === null || (typeof payload.youtubeVideoId === 'string' && /^[\w-]{11}$/.test(payload.youtubeVideoId)))
       && (payload.versionType === undefined || payload.versionType === 'karaoke' || payload.versionType === 'mv')
       && (payload.queueItemId === undefined || payload.queueItemId === null || (typeof payload.queueItemId === 'string' && payload.queueItemId.length > 0 && payload.queueItemId.length <= 128));
