@@ -306,6 +306,7 @@ export default function PlayerPage() {
             disableVideoInteraction={isQueueBrowserActive}
             tempoExtensionReady={tempoExtensionReady}
             nativeVocalDelayMs={getVocalPlaybackDelay(vocalCut.state,nowPlaying?.id??null)}
+            nativeVocalTransport={vocalCut.state.vocalModelId==='fast'||vocalCut.state.vocalModelId==='hq5'}
             onTempoRateChange={handleTempoRateChange}
           />
         </div>

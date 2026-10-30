@@ -145,6 +145,7 @@ app.whenReady().then(async()=>{
     if(message.type==='VOCAL_PLAYBACK_STATE'){
       if(!validateCommand(message.type,message.payload))return {ok:false,error:'Invalid playback state'};
       const p=message.payload;
+      void controller.vocalPlaybackState(p);
       if(vocal.enabled&&p.youtubeVideoId===controller.state.currentVideoId&&p.queueItemId===controller.state.currentQueueItemId)
         void vocal.transport({epoch:vocal.epoch,token:vocal.token,kind:p.playing?'play':'pause',paused:!p.playing});
       return {ok:true,state:controller.state};

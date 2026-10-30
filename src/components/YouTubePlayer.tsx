@@ -16,6 +16,7 @@ interface YouTubePlayerProps {
   tempoExtensionReady: boolean;
   onTempoRateChange: (playbackRate: number) => void;
   nativeVocalDelayMs?: number;
+  nativeVocalTransport?: boolean;
 }
 
 export type TempoDirection = 'increase' | 'decrease';
@@ -69,6 +70,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   tempoExtensionReady,
   onTempoRateChange,
   nativeVocalDelayMs=0,
+  nativeVocalTransport=false,
 }, ref) {
   const {
     nowPlaying,
@@ -114,10 +116,12 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   const playbackStartSeconds = getYouTubePlaybackStartSeconds(nowPlaying?.video?.channel_id);
   useEffect(()=>{
     nativeVocalDelayRef.current=nativeVocalDelayMs;
+  },[nativeVocalDelayMs]);
+  useEffect(()=>{
     delayedEndRef.current.cancel();
     const pending=delayedEndRef.current;
     return ()=>pending.cancel();
-  },[nativeVocalDelayMs,currentItemId,isPlaying]);
+  },[currentItemId,isPlaying]);
 
   const videoIdRef = useRef(videoId);
   const currentItemIdRef = useRef(currentItemId);
@@ -543,9 +547,9 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
 
   // Sync volume / mute state
   useEffect(()=>{
-    if(!nativeVocalDelayMs||!videoId||!currentItemId)return;
+    if((!nativeVocalTransport&&!nativeVocalDelayMs)||!videoId||!currentItemId)return;
     window.postMessage({source:VOCAL_CUT_PAGE_SOURCE,version:1,type:'VOCAL_PLAYBACK_STATE',payload:{youtubeVideoId:videoId,queueItemId:currentItemId,playing:isPlaying}},location.origin);
-  },[nativeVocalDelayMs,currentItemId,videoId,isPlaying]);
+  },[nativeVocalTransport,nativeVocalDelayMs,currentItemId,videoId,isPlaying]);
 
   useEffect(() => {
     if (!playerRef.current) return;

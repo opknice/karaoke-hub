@@ -15,3 +15,15 @@ test('source ended waits for the visible tail, duplicates cannot postpone it, an
  pending.schedule('two',4500,()=>ended.push('two'));context.mock.timers.tick(4400);pending.cancel();context.mock.timers.tick(1000);assert.deepEqual(ended,['one']);
  pending.schedule('three',0,()=>ended.push('three'));assert.deepEqual(ended,['one','three']);
 });
+
+test('HQ delay requires its explicit approved model while legacy Fast remains compatible',()=>{
+ const {getVocalPlaybackDelay}=load();const native={vocalModelId:'hq5',vocalRemoverEnabled:true,currentQueueItemId:'mv-1',currentVersionType:'mv',vocalRemoverDelayMs:8000};
+ assert.equal(getVocalPlaybackDelay(native,'mv-1'),8000);
+ for(const state of [{...native,vocalModelId:undefined},{...native,vocalModelId:'other'},{...native,vocalModelId:'fast'},{...native,vocalRemoverDelayMs:6000},{...native,vocalRemoverDelayMs:9000},{...native,vocalRemoverEnabled:false},{...native,currentVersionType:'karaoke'}])assert.equal(getVocalPlaybackDelay(state,'mv-1'),0);
+ assert.equal(getVocalPlaybackDelay(native,'mv-2'),0);assert.equal(getVocalPlaybackDelay({...native,vocalModelId:'fast',vocalRemoverDelayMs:4500},'mv-1'),4500);
+});
+test('HQ completion holds eight seconds and arbitrary intermediate delays cannot hold playback',context=>{
+ context.mock.timers.enable({apis:['setTimeout']});const {DelayedPlaybackEnd}=load(),pending=new DelayedPlaybackEnd();let ended=0;
+ pending.schedule('hq',8000,()=>ended++);context.mock.timers.tick(7999);assert.equal(ended,0);context.mock.timers.tick(1);assert.equal(ended,1);
+ pending.schedule('invalid',6000,()=>ended++);assert.equal(ended,2);
+});

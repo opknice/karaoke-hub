@@ -11,7 +11,7 @@ function initialState(profile) {
     searchVersion: 'karaoke', currentVersionType: 'karaoke', currentQueueItemId: null,
     vocalRemoverEligible: false, vocalRemoverReady: false,
     vocalRemoverEnabled:false,vocalRemoverStatus:'unavailable',vocalRemoverError:null,
-    vocalModelId:profile.id,vocalRemoverDelayMs:profile.delayMs,
+    vocalModelId:profile.id,vocalRemoverDelayMs:profile.delayMs,vocalResumePending:false,
     inputRms: 0, outputRms: 0, peakHz: 0,
   };
 }
@@ -44,15 +44,29 @@ class DesktopAudioController {
       supportsPitchPreservedTempo: false, pitchSemitones: 0, playbackRate: 1, inputRms: 0, outputRms: 0,
       vocalRemoverEnabled:false,vocalRemoverStatus:this.state.vocalRemoverReady?'ready':'unavailable' });
   }
-  cancelVocalResume(){this.pendingVocalResume=null;this.modelSwitchIntent=false;}
+  cancelVocalResume(){this.pendingVocalResume=null;this.modelSwitchIntent=false;if(this.state.vocalResumePending)this.update({vocalResumePending:false});}
   vocalModelReady(details){
     if(details.modelId!==this.state.vocalModelId)return Promise.resolve();
     this.update({vocalRemoverReady:true,vocalRuntimeStatus:'ready',vocalRuntimeError:null,vocalRemoverError:null,
       vocalRuntimeDevice:details.name,vocalRuntimeDenoise:details.denoise,vocalRemoverStatus:this.state.vocalRemoverEnabled?this.state.vocalRemoverStatus:'ready'});
-    const resume=this.pendingVocalResume;this.pendingVocalResume=null;
-    if(!resume||resume.selection!==this.modelSelectionGeneration||resume.generation!==this.generation||!this.modelSwitchIntent||!this.active
-      ||resume.queueItemId!==this.state.currentQueueItemId||resume.videoId!==this.state.currentVideoId||this.state.currentVersionType!=='mv')return Promise.resolve();
+    return this.resumeVocalWhenReady();
+  }
+  vocalPlaybackState(payload){
+    if(typeof payload.playing!=='boolean'||payload.youtubeVideoId!==this.state.currentVideoId||payload.queueItemId!==this.state.currentQueueItemId)return Promise.resolve();
+    this.update({vocalPlaybackPlaying:payload.playing});
+    return payload.playing?this.resumeVocalWhenReady():Promise.resolve();
+  }
+  resumeVocalWhenReady(){
+    const resume=this.pendingVocalResume;
+    if(!resume||!this.state.vocalRemoverReady)return Promise.resolve();
+    if(resume.selection!==this.modelSelectionGeneration||resume.generation!==this.generation||!this.modelSwitchIntent||!this.active
+      ||resume.queueItemId!==this.state.currentQueueItemId||resume.videoId!==this.state.currentVideoId||this.state.currentVersionType!=='mv'){
+      this.cancelVocalResume();return Promise.resolve();
+    }
+    if(this.state.vocalPlaybackPlaying===false){this.update({vocalResumePending:true});return Promise.resolve();}
+    this.pendingVocalResume=null;
     this.modelSwitchIntent=false;
+    if(this.state.vocalResumePending)this.update({vocalResumePending:false});
     return this.command('SET_VOCAL_REMOVER',{enabled:true}).then(result=>{
       if(!result.ok&&resume.generation===this.generation&&resume.queueItemId===this.state.currentQueueItemId)this.update({vocalRemoverError:result.error});
       return result;
@@ -93,7 +107,7 @@ class DesktopAudioController {
     const scheduledGeneration = this.generation;
     const job = async () => {
       try {
-        if (scheduledGeneration !== this.generation && type !== 'STOP_AUDIO') return { ok: false, error: 'คำสั่งเสียงถูกยกเลิกแล้ว', state: this.state };
+        if (scheduledGeneration !== this.generation && type !== 'STOP_AUDIO'&&type!=='SET_VOCAL_MODEL') return { ok: false, error: 'คำสั่งเสียงถูกยกเลิกแล้ว', state: this.state };
         await this.apply(type, payload,{modelSelection,generation:scheduledGeneration});
         return { ok: true, state: this.state };
       } catch (error) {
@@ -117,10 +131,11 @@ class DesktopAudioController {
         if(context.modelSelection!==this.modelSelectionGeneration)return;
         const profile=getVocalModel(payload.modelId);
         if(profile.id===this.state.vocalModelId&&this.state.vocalRuntimeStatus!=='error')return;
+        if(this.state.vocalRemoverStatus==='paused')this.update({vocalPlaybackPlaying:false});
         await this.revokeVocal({restorePosition:true});
-        if(context.modelSelection!==this.modelSelectionGeneration||context.generation!==this.generation)return;
+        if(context.modelSelection!==this.modelSelectionGeneration)return;
         this.update({vocalModelId:profile.id,vocalRemoverDelayMs:profile.delayMs,vocalRemoverEnabled:false,vocalRemoverReady:false,
-          vocalRemoverStatus:'unavailable',vocalRuntimeStatus:'loading',vocalRuntimeError:null,vocalRemoverError:null});
+          vocalRemoverStatus:'unavailable',vocalRuntimeStatus:'loading',vocalRuntimeError:null,vocalRemoverError:null,vocalResumePending:Boolean(this.modelSwitchIntent)});
         this.pendingVocalResume=this.modelSwitchIntent?{selection:context.modelSelection,generation:this.generation,queueItemId:this.state.currentQueueItemId,videoId:this.state.currentVideoId}:null;
         this.selectVocalModel(profile.id);return;
       }
@@ -158,6 +173,7 @@ class DesktopAudioController {
           await this.sourceRate(1).catch(() => {});
         }
         this.update({ currentVideoId: payload.youtubeVideoId, currentQueueItemId: queueItemId,
+          vocalPlaybackPlaying:undefined,
           currentVersionType: versionType, vocalRemoverEligible: Boolean(payload.youtubeVideoId && versionType === 'mv'),
           vocalRemoverEnabled:false,vocalRemoverStatus:this.state.vocalRemoverReady?'ready':'unavailable',vocalRemoverError:null,
           pitchSemitones: 0, playbackRate: 1,

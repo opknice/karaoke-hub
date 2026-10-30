@@ -34,6 +34,7 @@ export interface VocalCutPreference {
 }
 
 export interface VocalCutExtensionState {
+  vocalModelId?: 'fast' | 'hq5';
   vocalRemoverEnabled?: boolean;
   vocalRemoverDelayMs?: number;
   currentQueueItemId?: string | null;

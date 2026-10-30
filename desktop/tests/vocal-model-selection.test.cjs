@@ -44,3 +44,18 @@ test('same-item MV eligibility revocation cancels a warming model before queued 
  await c.vocalModelReady({modelId:'hq5',name:'GPU',denoise:true});await changed;await c.queue;
  assert.equal(c.state.vocalRemoverEnabled,false);assert.equal(c.state.vocalRemoverError,null,'A cancelled resume is not an attempted MV-only start');
 });
+
+test('switching a paused MV warms the model but waits for matching playback before resuming AI',async()=>{
+ const {controller:c,calls}=setup();await c.command('SET_VOCAL_REMOVER',{enabled:true});c.update({vocalRemoverStatus:'paused'});await c.command('SET_VOCAL_MODEL',{modelId:'hq5'});
+ await c.vocalModelReady({modelId:'hq5',name:'GPU',denoise:true});assert.equal(c.state.vocalRemoverEnabled,false,'Warming a paused MV must not attempt a playing-only start');assert.equal(c.state.vocalResumePending,true,'A paused automatic restart remains visible and cancellable');
+ await c.vocalPlaybackState({youtubeVideoId:'abcdefghijk',queueItemId:'other',playing:true});assert.equal(c.state.vocalRemoverEnabled,false);
+ await c.vocalPlaybackState({youtubeVideoId:'abcdefghijk',queueItemId:'queue-1',playing:true});await c.queue;assert.equal(c.state.vocalRemoverEnabled,true);assert.equal(calls.filter(Boolean).length,2);
+});
+
+test('Stop cancels automatic restart without discarding the latest selected model',async()=>{
+ let release;const gate=new Promise(resolve=>{release=resolve;});let stopping=false;const selected=[];
+ const {controller:c}=setup({setVocal:async enabled=>{if(!enabled&&stopping)await gate;},selectVocalModel:id=>selected.push(id)});
+ await c.command('SET_VOCAL_REMOVER',{enabled:true});stopping=true;const choosing=c.command('SET_VOCAL_MODEL',{modelId:'hq5'});await turn();
+ const stop=c.command('STOP_AUDIO');release();await choosing;await stop;
+ assert.equal(c.state.vocalModelId,'hq5');assert.deepEqual(selected,['hq5']);await c.vocalModelReady({modelId:'hq5',name:'GPU',denoise:true});assert.equal(c.state.vocalRemoverEnabled,false);
+});
