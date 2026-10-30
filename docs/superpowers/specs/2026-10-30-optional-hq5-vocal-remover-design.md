@@ -1,6 +1,6 @@
 # Optional Instrumental HQ5 mode for the Electron Player
 
-Date: 2026-10-30. Status: proposed design, awaiting user approval.
+Date: 2026-10-30. Status: approved by user on 2026-10-30 (พัฒนาตามแบบนี้). Fresh builder check: nothing important left.
 
 ## Intent and accepted choices
 
