@@ -40,7 +40,7 @@ window.addEventListener('message',event=>{
   const m=event.data;
   if(!m||m.source!==PAGE||m.version!==1||typeof m.type!=='string') return;
   // Main validates the sender frame, current URL and command union again.
-  void ipcRenderer.invoke('player-command',{type:m.type,payload:m.payload??{}})
+  void ipcRenderer.invoke('player-command',{type:m.type,payload:m.payload??{},...(m.type==='PREPARE_PLAYER_TRACK'?{requestId:m.requestId}:{})})
     .then(result=>post('EXTENSION_RESPONSE',result,m.requestId))
     .catch(()=>post('EXTENSION_RESPONSE',{ok:false,error:'ระบบเสียง Desktop ไม่พร้อม'},m.requestId));
 });

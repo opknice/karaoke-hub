@@ -14,7 +14,7 @@ import {
 import { useKaraoke } from '@/context/KaraokeContext';
 import { useVocalCutExtension } from '@/hooks/useVocalCutExtension';
 import { getVideoVersion } from '@/lib/video-version';
-import { getVocalPlaybackDelay } from '@/lib/vocal-playback';
+import { getVocalPlaybackDelay,getContinuousVocalPlayback } from '@/lib/vocal-playback';
 
 export default function PlayerPage() {
   const { activeRoom, ensureActiveRoom, nowPlaying, volume, isMuted, roomSyncError, refreshRoomQueue } = useKaraoke();
@@ -44,6 +44,7 @@ export default function PlayerPage() {
   );
   const toggleNormalize = vocalCut.toggleNormalize;
   const setExtensionPlaybackRate = vocalCut.setPlaybackRate;
+  const nativePlayback=getContinuousVocalPlayback(vocalCut.state,nowPlaying?.id??null);
   const tempoExtensionReady = vocalCut.state.supportsPitchPreservedTempo
     && ['capturing_original', 'capturing_vocal_cut', 'unsupported_mono'].includes(vocalCut.state.captureStatus);
 
@@ -307,6 +308,10 @@ export default function PlayerPage() {
             tempoExtensionReady={tempoExtensionReady}
             nativeVocalDelayMs={getVocalPlaybackDelay(vocalCut.state,nowPlaying?.id??null)}
             nativeVocalTransport={vocalCut.state.vocalModelId==='fast'||vocalCut.state.vocalModelId==='hq5'}
+            nativeContinuous={Boolean(nativePlayback)}
+            nativePlaybackTime={nativePlayback?.displayTime??null}
+            nativePlaybackSessionEpoch={nativePlayback?.sessionEpoch??0}
+            nativeVideoReady={nativePlayback?.videoReady??false}
             onTempoRateChange={handleTempoRateChange}
           />
         </div>

@@ -9,6 +9,8 @@ import { shouldMutePlayer } from '@/lib/player-keyboard';
 import { getYouTubePlaybackStartSeconds } from '@/lib/youtube-playback';
 import { DelayedPlaybackEnd } from '@/lib/vocal-playback';
 import { VOCAL_CUT_PAGE_SOURCE } from '@/lib/vocal-cut-bridge';
+import {prepareNativePlayerTrack,notifyNativePlayerReady} from '@/lib/native-player-preparation';
+import {getVideoVersion} from '@/lib/video-version';
 
 interface YouTubePlayerProps {
   isDisplayMode?: boolean; // TV / Projector Display Screen
@@ -17,6 +19,10 @@ interface YouTubePlayerProps {
   onTempoRateChange: (playbackRate: number) => void;
   nativeVocalDelayMs?: number;
   nativeVocalTransport?: boolean;
+  nativeContinuous?: boolean;
+  nativePlaybackTime?: number | null;
+  nativePlaybackSessionEpoch?: number;
+  nativeVideoReady?: boolean;
 }
 
 export type TempoDirection = 'increase' | 'decrease';
@@ -71,6 +77,10 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   onTempoRateChange,
   nativeVocalDelayMs=0,
   nativeVocalTransport=false,
+  nativeContinuous=false,
+  nativePlaybackTime=null,
+  nativePlaybackSessionEpoch=0,
+  nativeVideoReady=false,
 }, ref) {
   const {
     nowPlaying,
@@ -110,9 +120,20 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   const tempoExtensionReadyRef = useRef(tempoExtensionReady);
   const nativeVocalDelayRef=useRef(nativeVocalDelayMs);
   const delayedEndRef=useRef(new DelayedPlaybackEnd());
+  const preparationAbortRef=useRef<AbortController|null>(null);
+  const preparationSerialRef=useRef(0);
+  const preparedTrackRef=useRef<{videoId:string;itemId:string}|null>(null);
+  const prepareAndLoadRef=useRef<(player:YT.Player,videoId:string,itemId:string,startSeconds:number)=>Promise<void>>(async()=>{});
+  const nativeContinuousRef=useRef(nativeContinuous);
+  nativeContinuousRef.current=nativeContinuous;
+  const nativePositionRef=useRef(nativePlaybackTime);
+  nativePositionRef.current=nativeContinuous?nativePlaybackTime:null;
+  const previousNativeEpochRef=useRef(nativePlaybackSessionEpoch);
 
   const videoId = nowPlaying?.video?.youtube_video_id || '';
   const currentItemId = nowPlaying?.id || '';
+  const latestTrackRef=useRef({videoId,itemId:currentItemId,versionType:getVideoVersion(nowPlaying?.video),playing:isPlaying});
+  latestTrackRef.current={videoId,itemId:currentItemId,versionType:getVideoVersion(nowPlaying?.video),playing:isPlaying};
   const playbackStartSeconds = getYouTubePlaybackStartSeconds(nowPlaying?.video?.channel_id);
   useEffect(()=>{
     nativeVocalDelayRef.current=nativeVocalDelayMs;
@@ -121,7 +142,15 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     delayedEndRef.current.cancel();
     const pending=delayedEndRef.current;
     return ()=>pending.cancel();
-  },[currentItemId,isPlaying]);
+  },[currentItemId]);
+  useEffect(()=>{
+    if(nativeContinuousRef.current){if(isPlaying)delayedEndRef.current.resume();else delayedEndRef.current.pause();}
+    else delayedEndRef.current.cancel();
+  },[isPlaying]);
+  useEffect(()=>{
+    if(nativePlaybackSessionEpoch>0&&previousNativeEpochRef.current>0&&nativePlaybackSessionEpoch!==previousNativeEpochRef.current)delayedEndRef.current.cancel();
+    previousNativeEpochRef.current=nativePlaybackSessionEpoch;
+  },[nativePlaybackSessionEpoch]);
 
   const videoIdRef = useRef(videoId);
   const currentItemIdRef = useRef(currentItemId);
@@ -278,6 +307,20 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     }, 1500);
   }, [clearAutoplayCheck, reportAutoplayBlocked]);
 
+  prepareAndLoadRef.current=async(player,targetVideoId,itemId,startSeconds)=>{
+    const serial=++preparationSerialRef.current;
+    preparationAbortRef.current?.abort();const abort=new AbortController();preparationAbortRef.current=abort;preparedTrackRef.current=null;
+    const track={youtubeVideoId:targetVideoId,queueItemId:itemId,versionType:latestTrackRef.current.versionType};
+    const result=await prepareNativePlayerTrack(track,{signal:abort.signal});
+    if(result.cancelled||abort.signal.aborted||serial!==preparationSerialRef.current||latestTrackRef.current.itemId!==itemId||latestTrackRef.current.videoId!==targetVideoId||playerRef.current!==player)return;
+    preparedTrackRef.current={videoId:targetVideoId,itemId};
+    try{
+      if(latestTrackRef.current.playing){player.loadVideoById({videoId:targetVideoId,startSeconds});verifyAutoplayStarted(player,itemId);}
+      else player.cueVideoById({videoId:targetVideoId,startSeconds});
+      setCurrentTimeRef.current(startSeconds);disableYouTubeCaptions(player);
+    }catch(error){console.error('Error loading prepared video:',error);}
+  };
+
   useEffect(() => {
     videoIdRef.current = videoId;
     currentItemIdRef.current = currentItemId;
@@ -372,13 +415,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
             const readyVideoId = videoIdRef.current;
             if (readyVideoId) {
               const readyStartSeconds = playbackStartSecondsRef.current;
-              if (isPlayingRef.current) {
-                event.target.loadVideoById({ videoId: readyVideoId, startSeconds: readyStartSeconds });
-                verifyAutoplayStarted(event.target, currentItemIdRef.current);
-              } else {
-                event.target.cueVideoById({ videoId: readyVideoId, startSeconds: readyStartSeconds });
-              }
-              setCurrentTimeRef.current(readyStartSeconds);
+              void prepareAndLoadRef.current(event.target,readyVideoId,currentItemIdRef.current,readyStartSeconds);
             }
 
             readAvailablePlaybackRates(event.target);
@@ -387,6 +424,11 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
           onStateChange: (event: YT.OnStateChangeEvent) => {
             // YT.PlayerState: -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 cued
             if (event.data === youtubeApi.PlayerState.PLAYING) {
+              const prepared=preparedTrackRef.current;
+              if(!prepared||prepared.itemId!==currentItemIdRef.current)return;
+              const actual=event.target.getVideoUrl?.();
+              if(actual&&/[?&]v=([\w-]{11})(?:&|$)/.exec(actual)?.[1]!==prepared.videoId)return;
+              notifyNativePlayerReady({youtubeVideoId:prepared.videoId,queueItemId:prepared.itemId,versionType:latestTrackRef.current.versionType});
               delayedEndRef.current.cancel();
               disableYouTubeCaptions(event.target);
               clearAutoplayCheck();
@@ -416,6 +458,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
                 resetTempo(event.target);
                 advanceAfterPlayback(endedItemId,'ended');
               });
+              if(nativeContinuousRef.current&&!latestTrackRef.current.playing)delayedEndRef.current.pause();
             }
           },
           onPlaybackRateChange: (event: YT.OnPlaybackRateChangeEvent) => {
@@ -465,6 +508,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     }
 
     return () => {
+      preparationAbortRef.current?.abort();preparedTrackRef.current=null;
       clearTimeout(readyTimer);
       playerReadyRef.current = false;
       clearAutoplayCheck();
@@ -485,12 +529,6 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   ]);
 
   // Load the newly selected queue item into the existing player.
-  // We snapshot isPlaying into a separate ref (latestIsPlayingRef) that is written on every
-  // render, so this effect can read the freshest value without needing isPlaying in its deps
-  // (which would re-trigger a loadVideoById on every pause/play toggle).
-  const latestIsPlayingRef = useRef(isPlaying);
-  latestIsPlayingRef.current = isPlaying;
-
   useEffect(() => {
     resetTempo(playerRef.current);
     lastHandledItemIdRef.current = null;
@@ -501,22 +539,10 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     }
 
     const player = playerRef.current;
-    if (!videoId || !player || !playerReadyRef.current) return;
+    if(!videoId){++preparationSerialRef.current;preparationAbortRef.current?.abort();preparedTrackRef.current=null;return;}
+    if (!player || !playerReadyRef.current) return;
 
-    try {
-      // Read from latestIsPlayingRef — written on every render, always reflects the state
-      // value from the same render cycle that changed videoId/currentItemId.
-      if (latestIsPlayingRef.current) {
-        player.loadVideoById({ videoId, startSeconds: playbackStartSeconds });
-        verifyAutoplayStarted(player, currentItemId);
-      } else {
-        player.cueVideoById({ videoId, startSeconds: playbackStartSeconds });
-      }
-      setCurrentTime(playbackStartSeconds);
-      disableYouTubeCaptions(player);
-    } catch (error) {
-      console.error('Error loading the next video:', error);
-    }
+    void prepareAndLoadRef.current(player,videoId,currentItemId,playbackStartSeconds);
   }, [clearAutoplayCheck, currentItemId, playbackStartSeconds, resetTempo, setCurrentTime, verifyAutoplayStarted, videoId]);
 
   useEffect(() => {
@@ -529,8 +555,10 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   // Sync play/pause state
   useEffect(() => {
     if (!playerRef.current || !playerRef.current.playVideo) return;
+    if(preparedTrackRef.current?.itemId!==currentItemId)return;
     try {
       if (isPlaying) {
+        if(nativeContinuousRef.current&&delayedEndRef.current.pending&&playerRef.current.getPlayerState()===0)return;
         playerRef.current.playVideo();
         if (currentItemId) verifyAutoplayStarted(playerRef.current, currentItemId);
       } else {
@@ -596,7 +624,8 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     if (isPlaying) {
       interval = setInterval(() => {
         if (playerRef.current && playerRef.current.getCurrentTime) {
-          const current = playerRef.current.getCurrentTime() || 0;
+          const displayed=nativePositionRef.current;
+          const current = typeof displayed==='number'&&Number.isFinite(displayed)&&displayed>=0?displayed:playerRef.current.getCurrentTime() || 0;
           setCurrentTime(current);
         }
       }, 500);
@@ -711,6 +740,12 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
           aria-hidden={!nowPlaying}
           className={`absolute inset-0 h-full w-full ${disableVideoInteraction || isDisplayMode || !nowPlaying ? 'pointer-events-none' : ''}`}
         />
+
+        {nowPlaying&&nativeContinuous&&!nativeVideoReady&&(
+          <div role="status" data-native-buffering="true" className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black text-sm text-zinc-300">
+            กำลังเตรียมเพลง · ประมาณ 8 วินาที
+          </div>
+        )}
 
         {initializationError && (
           <div role="alert" className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-4 bg-zinc-950/95 p-6 text-center">

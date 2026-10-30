@@ -34,6 +34,14 @@ export interface VocalCutPreference {
 }
 
 export interface VocalCutExtensionState {
+  supportsContinuousVocal?: boolean;
+  vocalBufferActive?: boolean;
+  continuousSessionId?: string | null;
+  vocalSessionEpoch?: number;
+  vocalPlaybackDelayMs?: number;
+  vocalDisplayTime?: number | null;
+  vocalVideoReady?: boolean;
+  vocalSourceEnded?: boolean;
   vocalModelId?: 'fast' | 'hq5';
   vocalRemoverEnabled?: boolean;
   vocalRemoverDelayMs?: number;

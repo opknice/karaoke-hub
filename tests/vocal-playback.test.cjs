@@ -27,3 +27,14 @@ test('HQ completion holds eight seconds and arbitrary intermediate delays cannot
  pending.schedule('hq',8000,()=>ended++);context.mock.timers.tick(7999);assert.equal(ended,0);context.mock.timers.tick(1);assert.equal(ended,1);
  pending.schedule('invalid',6000,()=>ended++);assert.equal(ended,2);
 });
+test('matching continuous MV sessions retain eight-second original tail while removal is off',()=>{
+ const {getVocalPlaybackDelay,getContinuousVocalPlayback}=load();const state={supportsContinuousVocal:true,vocalBufferActive:true,continuousSessionId:'session-queue-1',vocalSessionEpoch:2,vocalPlaybackDelayMs:8000,captureStatus:'capturing_original',vocalModelId:'fast',vocalRemoverEnabled:false,currentVersionType:'mv',currentQueueItemId:'q-1',vocalDisplayTime:12.25};
+ assert.equal(getVocalPlaybackDelay(state,'q-1'),8000);assert.equal(getContinuousVocalPlayback(state,'q-1').displayTime,12.25);
+ for(const patch of [{supportsContinuousVocal:false},{vocalBufferActive:false},{continuousSessionId:''},{vocalSessionEpoch:0},{vocalPlaybackDelayMs:6000},{captureStatus:'installed_idle'},{vocalModelId:'unknown'},{currentVersionType:'karaoke'}])assert.equal(getVocalPlaybackDelay({...state,...patch},'q-1'),0,JSON.stringify(patch));
+ assert.equal(getVocalPlaybackDelay(state,'other'),0);assert.equal(getContinuousVocalPlayback({...state,vocalDisplayTime:NaN},'q-1').displayTime,null);
+});
+test('paused continuous tail keeps remaining duration and duplicates cannot restart it',context=>{
+ context.mock.timers.enable({apis:['setTimeout']});let now=0,ended=0;const {DelayedPlaybackEnd}=load(),pending=new DelayedPlaybackEnd(()=>now);
+ pending.schedule('q',8000,()=>ended++);now=3000;context.mock.timers.tick(3000);pending.pause();pending.schedule('q',8000,()=>ended++);
+ now=23000;context.mock.timers.tick(20000);assert.equal(ended,0);assert.equal(pending.pending,true);pending.resume();now=27999;context.mock.timers.tick(4999);assert.equal(ended,0);now=28000;context.mock.timers.tick(1);assert.equal(ended,1);assert.equal(pending.pending,false);
+});

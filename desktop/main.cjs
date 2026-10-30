@@ -9,6 +9,7 @@ const {VocalVideo}=require('./lib/vocal-video.cjs');
 const {ContinuousVocalCoordinator}=require('./lib/continuous-vocal-coordinator.cjs');
 const {getVocalModel}=require('./lib/vocal-models.cjs');
 const {VocalModelSettings}=require('./lib/vocal-model-settings.cjs');
+const {NativeTrackPreparation}=require('./lib/native-track-preparation.cjs');
 
 protocol.registerSchemesAsPrivileged([{scheme:'karaoke-app',privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true,stream:true}}]);
 app.commandLine.appendSwitch('autoplay-policy','no-user-gesture-required');
@@ -141,13 +142,23 @@ app.whenReady().then(async()=>{
     setBridge:configuration=>{if(!player.webContents.isDestroyed()&&isPlayerUrl(player.webContents.getURL(),playerUrl))player.webContents.send('vocal-bridge',configuration);},
   });
   controller.update({vocalRuntimeStatus:'loading'});
+  const preparation=new NativeTrackPreparation(controller);
   ipcMain.handle('player-command',(event,message)=>{
     if(!validSender(event,player.webContents,url=>isPlayerUrl(url,playerUrl))) return {ok:false,error:'Untrusted Player'};
     // Fixed track preparation grants capture of this trusted Player only; no model/path controls.
-    if(!['PLAYER_HELLO','REQUEST_STATUS','TRACK_CHANGED','PREPARE_PLAYER_TRACK','SET_PLAYBACK_RATE','SET_PLAYER_VOLUME','TEMPO_UP','TEMPO_DOWN','SET_SEARCH_VERSION','VOCAL_PLAYBACK_STATE'].includes(message?.type)) return {ok:false,error:'Unsupported Player command'};
+    if(!['PLAYER_HELLO','REQUEST_STATUS','TRACK_CHANGED','PREPARE_PLAYER_TRACK','CANCEL_PLAYER_PREPARATION','SET_PLAYBACK_RATE','SET_PLAYER_VOLUME','TEMPO_UP','TEMPO_DOWN','SET_SEARCH_VERSION','VOCAL_PLAYBACK_STATE'].includes(message?.type)) return {ok:false,error:'Unsupported Player command'};
+    if(message.type==='PREPARE_PLAYER_TRACK'){
+      if(!validateCommand(message.type,message.payload))return{ok:false,error:'Invalid playback preparation'};
+      return preparation.prepare(message.payload,message.requestId);
+    }
+    if(message.type==='CANCEL_PLAYER_PREPARATION'){
+      if(!validateCommand(message.type,message.payload))return{ok:false,error:'Invalid playback cancellation'};
+      preparation.cancel(message.payload.preparationId);return{ok:true,state:controller.state};
+    }
     if(message.type==='VOCAL_PLAYBACK_STATE'){
       if(!validateCommand(message.type,message.payload))return {ok:false,error:'Invalid playback state'};
       const p=message.payload;
+      if(p.mediaReady)preparation.ready(p);
       void controller.vocalPlaybackState(p);
       if(vocal.active&&p.youtubeVideoId===controller.state.currentVideoId&&p.queueItemId===controller.state.currentQueueItemId){
         const epoch=vocal.sessionEpoch,token=vocal.token;
