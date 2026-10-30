@@ -54,6 +54,14 @@ async function wait(read,check,label,timeout=30000){const until=Date.now()+timeo
    }
   }
   if(process.argv.includes('--long')){
+   if(process.argv.includes('--extended')){
+    await media('(document.querySelector("video.html5-main-video")||document.querySelector("video")).pause()');
+    await wait(state,s=>s.vocalRemoverStatus==='paused','Pre-long-run pause');
+    await media(`(document.querySelector("video.html5-main-video")||document.querySelector("video")).currentTime=${startSeconds}`);
+    await wait(()=>media('!(document.querySelector("video.html5-main-video")||document.querySelector("video")).seeking'),Boolean,'Pre-long-run seek');
+    await media('(document.querySelector("video.html5-main-video")||document.querySelector("video")).play()');
+    await wait(state,s=>s.vocalRemoverStatus==='on','Pre-long-run resumed AI',profile.startupDeadlineMs+2000);
+   }
    const seconds=Number(process.env.KARAOKE_VOCAL_LONG_SECONDS||90);assert.ok(seconds>=1&&seconds<=600);const until=Date.now()+seconds*1000;let samples=0;
    const source=await media('(()=>{const v=document.querySelector("video.html5-main-video")||document.querySelector("video");return {time:v.currentTime,duration:v.duration};})()');
    assert.ok(source.duration-source.time>seconds+5,`MV must cover the full continuous test: ${JSON.stringify(source)}`);
