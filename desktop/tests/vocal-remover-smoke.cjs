@@ -23,14 +23,15 @@ async function wait(read,check,label,timeout=30000){const until=Date.now()+timeo
   await remote.evaluate(()=>window.postMessage({source:'karaoke-hub-page',version:1,type:'SET_VOCAL_MODEL',payload:{modelId:'hq5'}},location.origin));
   await new Promise(resolve=>setTimeout(resolve,150));assert.equal((await state()).vocalModelId,originalModel,'Remote Player cannot select a native model');
   await shell.locator('#vocal-model').selectOption(profile.id);
-  await shell.locator('#version-mv').click();await remote.getByRole('combobox').fill('ขอใจเธอแลกเบอร์โทร');
+  await shell.locator('#version-mv').click();await remote.getByRole('combobox').fill(process.env.KARAOKE_VOCAL_QUERY||'ขอใจเธอแลกเบอร์โทร');
   await remote.getByRole('button',{name:'ค้นหา MV',exact:true}).click();await remote.getByRole('option').first().click();
   const track=await wait(state,s=>s.currentVersionType==='mv'&&s.currentQueueItemId,'MV selected');
   await wait(state,s=>s.vocalModelId===profile.id&&s.vocalRemoverReady===true,'Real GPU runtime prepared',20000);
   if(process.argv.includes('--record'))await instrumentRecording(app);
   await shell.locator('#audio').click();await wait(state,s=>s.captureStatus==='capturing_original'&&s.inputRms>.001,'Captured MV audio');
-  await media('(()=>{const video=document.querySelector("video.html5-main-video")||document.querySelector("video");video.currentTime=45;return true;})()');
-  await wait(()=>media('(()=>{const v=document.querySelector("video.html5-main-video")||document.querySelector("video");return{ready:v.readyState,time:v.currentTime,seeking:v.seeking,paused:v.paused};})()'),s=>s?.ready>=2&&!s.seeking&&!s.paused&&s.time>=45,'Vocal section ready');
+  const startSeconds=Number(process.env.KARAOKE_VOCAL_START_SECONDS||45);assert.ok(Number.isFinite(startSeconds)&&startSeconds>=0&&startSeconds<=600);
+  await media(`(()=>{const video=document.querySelector("video.html5-main-video")||document.querySelector("video");video.currentTime=${startSeconds};return true;})()`);
+  await wait(()=>media('(()=>{const v=document.querySelector("video.html5-main-video")||document.querySelector("video");return{ready:v.readyState,time:v.currentTime,seeking:v.seeking,paused:v.paused};})()'),s=>s?.ready>=2&&!s.seeking&&!s.paused&&s.time>=startSeconds,'Vocal section ready');
   const started=Date.now();await shell.locator('#vocal-remover').click();
   const running=await wait(state,s=>s.vocalRemoverStatus==='on'||s.vocalRemoverStatus==='error','Live AI output',profile.startupDeadlineMs+2000);
   assert.equal(running.vocalRemoverStatus,'on',JSON.stringify(running));
@@ -54,10 +55,17 @@ async function wait(read,check,label,timeout=30000){const until=Date.now()+timeo
   }
   if(process.argv.includes('--long')){
    const seconds=Number(process.env.KARAOKE_VOCAL_LONG_SECONDS||90);assert.ok(seconds>=1&&seconds<=600);const until=Date.now()+seconds*1000;let samples=0;
-   while(Date.now()<until){const current=await state();assert.equal(current.vocalRemoverStatus,'on',JSON.stringify(current));assert.equal(current.vocalRemoverEnabled,true);await new Promise(resolve=>setTimeout(resolve,500));samples++;}
-   console.log('PASS continuous live AI processing',{seconds,samples});
+   const source=await media('(()=>{const v=document.querySelector("video.html5-main-video")||document.querySelector("video");return {time:v.currentTime,duration:v.duration};})()');
+   assert.ok(source.duration-source.time>seconds+5,`MV must cover the full continuous test: ${JSON.stringify(source)}`);
+   let maxEncodedBytes=0,maxPackets=0,maxEncodeQueue=0,maxDecodeQueue=0,maxMemoryKiB=0;
+   while(Date.now()<until){const current=await state();assert.equal(current.vocalRemoverStatus,'on',JSON.stringify(current));assert.equal(current.vocalRemoverEnabled,true);
+    const video=await media('window.__karaokeVocalVideo?.snapshot()');assert.ok(video,'Delayed video stays active');
+    if(profile.videoBufferMode==='encoded'){const codec=video.codecBuffer;assert.ok(codec,JSON.stringify(video));assert.ok(codec.encodedBytes<=64*1024*1024&&codec.bufferedFrames<=512&&codec.pendingEncodes<=4&&codec.pendingDecodes<=4,JSON.stringify(codec));maxEncodedBytes=Math.max(maxEncodedBytes,codec.encodedBytes);maxPackets=Math.max(maxPackets,codec.bufferedFrames);maxEncodeQueue=Math.max(maxEncodeQueue,codec.encoderQueue);maxDecodeQueue=Math.max(maxDecodeQueue,codec.decoderQueue);}
+    if(samples%10===0){const memory=await app.evaluate(({app})=>app.getAppMetrics().reduce((sum,metric)=>sum+(metric.memory?.workingSetSize||0),0));maxMemoryKiB=Math.max(maxMemoryKiB,memory);}
+    await new Promise(resolve=>setTimeout(resolve,500));samples++;}
+   console.log('PASS continuous live AI processing',{seconds,samples,maxEncodedBytes,maxPackets,maxEncodeQueue,maxDecodeQueue,maxMemoryKiB});
   }
-  if(process.argv.includes('--record'))console.log('Recorded comparison',await recordComparison(app,path.resolve(__dirname,'../../build/verification/vocal-comparison')));
+  if(process.argv.includes('--record'))console.log('Recorded comparison',await recordComparison(app,path.resolve(__dirname,`../../build/verification/vocal-comparison-${profile.id}`),{delaySeconds:profile.delayMs/1000,durationMs:profile.id==='hq5'?30000:10000}));
   await shell.locator('#version-karaoke').click();
   assert.equal((await state()).vocalRemoverEnabled,true);assert.equal((await state()).currentQueueItemId,track.currentQueueItemId);
   assert.equal(await remote.getByRole('combobox').evaluate(el=>document.activeElement===el&&document.hasFocus()),true);
@@ -129,4 +137,10 @@ async function wait(read,check,label,timeout=30000){const until=Date.now()+timeo
   await remote.evaluate(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'End',code:'End',bubbles:true,cancelable:true})));
  }catch(error){if(shell)console.error('State',await shell.evaluate(()=>window.desktopPlayer.command('REQUEST_STATUS')));if(remote)console.error((await remote.locator('body').innerText()).slice(-1000));throw error;}
  finally{await app.close();}
+ if(process.argv.includes('--persistence')){
+  const reopened=await electron.launch({executablePath:process.env.KARAOKE_EXECUTABLE||require('electron'),args:process.env.KARAOKE_EXECUTABLE?[]:[path.resolve(__dirname,'..')],env,timeout:60000});
+  try{const shell=await wait(async()=>reopened.context().pages().find(p=>p.url()==='karaoke-app://app/ui/index.html'),Boolean,'Relaunched shell');
+   const saved=await shell.evaluate(()=>window.desktopPlayer.command('REQUEST_STATUS'));assert.equal(saved.state.vocalModelId,profile.id);assert.equal(saved.state.vocalRemoverEnabled,false);assert.equal(saved.state.captureStatus,'installed_idle');console.log('PASS selected model persists across a real relaunch; capture and AI remain off');
+  }finally{await reopened.close();}
+ }
 })().catch(error=>{console.error(error);process.exitCode=1;});

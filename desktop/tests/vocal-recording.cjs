@@ -11,8 +11,9 @@ async function instrumentRecording(app){
   })()`);
  });
 }
-async function recordComparison(app,outputDirectory){
- const recording=await app.evaluate(async({webContents})=>{
+async function recordComparison(app,outputDirectory,{delaySeconds=4.5,durationMs=10000}={}){
+ if(![4.5,8].includes(delaySeconds)||!Number.isInteger(durationMs)||durationMs<(delaySeconds+4)*1000||durationMs>60000)throw new Error('Invalid diagnostic recording duration or profile delay');
+ const recording=await app.evaluate(async({webContents},durationMs)=>{
   const host=webContents.getAllWebContents().find(contents=>contents.getURL()==='karaoke-app://app/audio/index.html');
   return host.executeJavaScript(`(async()=>{
     const {context,input,output}=window.__vocalRecording;
@@ -23,7 +24,7 @@ async function recordComparison(app,outputDirectory){
       node.connect(processor);processor.connect(mute);mute.connect(context.destination);return result;
     };
     const original=capture(input),instrumental=capture(output);
-    await new Promise(resolve=>setTimeout(resolve,10000));
+    await new Promise(resolve=>setTimeout(resolve,${durationMs}));
     const encode=result=>{
       result.processor.onaudioprocess=null;result.node.disconnect(result.processor);result.processor.disconnect();result.mute.disconnect();
       const pcm=new Float32Array(result.frames*2);let offset=0;
@@ -33,10 +34,10 @@ async function recordComparison(app,outputDirectory){
     };
     return {sampleRate:context.sampleRate,original:encode(original),instrumental:encode(instrumental)};
   })()`);
- });
+ },durationMs);
  const floats=encoded=>{const bytes=Buffer.from(encoded,'base64');return new Float32Array(bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength));};
  const raw=floats(recording.original.pcm),processed=floats(recording.instrumental.pcm);
- const offset=Math.round((recording.original.start+4.5-recording.instrumental.start)*recording.sampleRate);
+ const offset=Math.round((recording.original.start+delaySeconds-recording.instrumental.start)*recording.sampleRate);
  const frames=Math.min(recording.original.frames,recording.instrumental.frames-offset);
  if(offset<0||frames<recording.sampleRate*4)throw new Error('Not enough aligned diagnostic audio');
  const original=raw.subarray(0,frames*2),instrumental=processed.subarray(offset*2,(offset+frames)*2);
@@ -46,7 +47,7 @@ async function recordComparison(app,outputDirectory){
  fs.mkdirSync(outputDirectory,{recursive:true});
  fs.writeFileSync(path.join(outputDirectory,'Original.wav'),wav(original));fs.writeFileSync(path.join(outputDirectory,'Instrumental.wav'),wav(instrumental));
  const rms=pcm=>Math.sqrt(pcm.reduce((sum,sample)=>sum+sample*sample,0)/pcm.length);
- const report={sampleRate:recording.sampleRate,frames,durationSeconds:frames/recording.sampleRate,sharedGain:gain,originalRms:rms(original),instrumentalRms:rms(instrumental),alignedWithDelaySeconds:4.5,rawStart:recording.original.start,processedStart:recording.instrumental.start};
+ const report={sampleRate:recording.sampleRate,frames,durationSeconds:frames/recording.sampleRate,sharedGain:gain,originalRms:rms(original),instrumentalRms:rms(instrumental),alignedWithDelaySeconds:delaySeconds,rawStart:recording.original.start,processedStart:recording.instrumental.start};
  fs.writeFileSync(path.join(outputDirectory,'comparison.json'),JSON.stringify(report,null,2));return report;
 }
 module.exports={instrumentRecording,recordComparison};

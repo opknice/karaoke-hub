@@ -1,5 +1,13 @@
 # Desktop releases
 
+## 0.1.6 — 2026-10-30
+
+Added an optional **คุณภาพสูง · HQ5** model alongside **เร็ว (เดิม)**, which remains the default for new installations. The selected model is saved locally. HQ5 uses Instrumental HQ5 with sign-denoise and normalized overlap-add, an eight-second audio buffer and bounded compressed 720p/30 video. Fast retains the original model and 4.5-second buffer.
+
+Switching restores original playback while the selected model prepares and resumes only for the same playing MV and active intent. Paused switching waits for Play; Stop cancels pending resumption while keeping the chosen model. Stale worker/video callbacks are revoked, and profile-aware delayed completion preserves the final musical tail. Both verified models and the isolated runtime are included in the installer.
+
+Source acceptance on Windows 11 / GTX 1650 Ti measured HQ5 first output at approximately 8.2 seconds. Automated tests cover model identity, bounded streaming/video, switching, pause/seek, cancellation, focus and delayed completion. The user selected HQ5 in the listening trial; separation quality still depends on the mix. Packaged release measurements are recorded in the implementation plan.
+
 ## 0.1.5 — 2026-10-29
 
 Replaced the disabled Vocal Remover placeholder with local UVR MDX source separation on a validated DirectML GPU. It works only for the playing MV, continues when search switches to Karaoke, and stops when that MV ends. Audio and video share a 4.5-second buffer; delayed video is capped at 720p/30 fps. Pause and seek invalidate old results, resume re-primes the buffer, and disabling restores the displayed position. Missed deadlines restore original playback and report an error.

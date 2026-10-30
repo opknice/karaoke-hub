@@ -1,12 +1,14 @@
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {execFileSync}=require('node:child_process');
+const {validateVocalModels,assertBuildSourcesOutsideTarget}=require('./vocal-build-inputs.cjs');
 const parent=path.resolve(__dirname,'../vocal');
 const target=path.join(parent,'runtime');
 const configPath=path.resolve(__dirname,'../.vocal-build.json');
-if(!fs.existsSync(configPath))throw new Error('Create desktop/.vocal-build.json with pythonBase, packages, directml and model paths before packaging Vocal Remover');
+if(!fs.existsSync(configPath))throw new Error('Create desktop/.vocal-build.json with pythonBase, packages, directml, model and hqModel paths before packaging Vocal Remover');
 const config=JSON.parse(fs.readFileSync(configPath,'utf8'));
 const hash=file=>crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-if(hash(config.model)!=='8289784cda38543ff431add4070662813311a8cccfc0112ca82f76d9dba2b4ca')throw new Error('Vocal model integrity check failed');
+const models=validateVocalModels(config);
+assertBuildSourcesOutsideTarget([config.pythonBase,config.packages,config.directml,...models.map(model=>model.file)],target);
 for(const source of [path.join(config.pythonBase,'python.exe'),path.join(config.packages,'numpy'),path.join(config.packages,'scipy'),path.join(config.directml,'onnxruntime')])if(!fs.existsSync(source))throw new Error(`Missing vocal build input: ${source}`);
 // This is the dedicated generated runtime only. Refuse symlinks or a changed parent.
 if(fs.realpathSync(parent)!==path.resolve(parent)||path.basename(target)!=='runtime')throw new Error('Unsafe vocal runtime output');
@@ -28,9 +30,10 @@ for(const name of fs.readdirSync(config.packages)){
  fs.cpSync(path.join(config.packages,name),path.join(packages,name),{recursive:true,filter:source=>path.basename(source)!=='__pycache__'});
 }
 for(const name of ['onnxruntime','onnxruntime_directml-1.24.4.dist-info'])fs.cpSync(path.join(config.directml,name),path.join(packages,name),{recursive:true,filter:source=>path.basename(source)!=='__pycache__'});
-fs.copyFileSync(config.model,path.join(target,'UVR_MDXNET_Main.onnx'));
+for(const {profile,file}of models)fs.copyFileSync(file,path.join(target,profile.filename));
 const info=JSON.parse(execFileSync(path.join(python,'python.exe'),['-c','import json,sys,numpy,scipy,onnxruntime as ort; from scipy.fft import rfft,irfft; print(json.dumps({"python":sys.version.split()[0],"prefix":sys.prefix,"numpy":numpy.__version__,"scipy":scipy.__version__,"ort":ort.__version__,"providers":ort.get_available_providers()}))'],{windowsHide:true,encoding:'utf8',env:{SystemRoot:process.env.SystemRoot,WINDIR:process.env.WINDIR,TEMP:process.env.TEMP,TMP:process.env.TMP}}));
 if(info.prefix!==python||!info.python.startsWith('3.12.')||info.numpy!=='2.2.6'||info.scipy!=='1.15.3'||info.ort!=='1.24.4'||!info.providers.includes('DmlExecutionProvider'))throw new Error('Portable runtime validation failed');
-const manifest={...info,pythonLocation:'python',modelSha256:hash(path.join(target,'UVR_MDXNET_Main.onnx'))};delete manifest.prefix;
+const manifest={...info,pythonLocation:'python',modelSha256:hash(path.join(target,'UVR_MDXNET_Main.onnx')),
+  models:Object.fromEntries(models.map(({profile})=>[profile.id,{file:profile.filename,bytes:profile.bytes,sha256:hash(path.join(target,profile.filename))}]))};delete manifest.prefix;
 fs.writeFileSync(path.join(target,'manifest.json'),JSON.stringify(manifest,null,2));
-console.log('Prepared isolated Python 3.12 / DirectML runtime and verified UVR model');
+console.log('Prepared isolated Python 3.12 / DirectML runtime and both verified vocal models');
