@@ -20,7 +20,7 @@ This installer is **unsigned**, because no publisher signing certificate is conf
 
 Choose **เร็ว (เดิม)** for the original Fast model or **คุณภาพสูง · HQ5** for the Instrumental HQ5 model selected in the listening trial. Fast is the default on a new installation; your choice is remembered locally. Switching while enabled temporarily restores original playback and prepares the selected model, then resumes removal for the same playing MV. Switching while paused waits for your Play; Stop cancels automatic resumption.
 
-Vocal removal runs entirely on this computer with the two bundled UVR MDX models and DirectML runtime; end users do not install Python. A sufficiently fast DirectX 12 GPU is required. The app measures GPU throughput before enabling the feature and restores original playback with an error if processing misses its deadline. Initial model warmup is separate from the live buffer: Fast uses 4.5 seconds and HQ5 uses 8 seconds. On the tested GTX 1650 Ti, source-app first processed output measured about 4.7 seconds for Fast and 8.2 seconds for HQ5; other hardware/output devices may differ. Delayed video is limited to 720p and 30 fps; HQ5 uses bounded compressed video storage. Unsupported codecs or missed processing deadlines restore original playback. Separation quality depends on the mix and can leave residual vocals or affect instruments.
+Vocal removal runs entirely on this computer with the two bundled UVR MDX models and DirectML runtime; end users do not install Python. A sufficiently fast DirectX 12 GPU is required. The app measures GPU throughput before enabling the feature and restores original playback with an error if processing misses its deadline. Initial model warmup is separate from the live buffer: Fast uses 4.5 seconds and HQ5 uses 8 seconds. On the tested GTX 1650 Ti, packaged production first processed output measured about 4.7 seconds for Fast and 8.2 seconds for HQ5; other hardware/output devices may differ. Delayed video is limited to 720p and 30 fps; HQ5 uses bounded compressed video storage. Unsupported codecs or missed processing deadlines restore original playback. Separation quality depends on the mix and can leave residual vocals or affect instruments.
 
 ## Development
 
@@ -61,6 +61,8 @@ Version 0.1.1 removes Vocal Cut and Auto Level from the desktop toolbar, command
 The trusted Player is a sandboxed, context-isolated WebContentsView with Node disabled. A different local renderer captures its webContents via Electron's display-media handler with local echo disabled. Processed audio is emitted by that local renderer, never the capture source. System loopback and microphones are never requested. Capture and IPC grants require the expected sender's main frame and exact URL. Privileged content remains in local packaged files. The remote bridge accepts only the existing fixed Player audio messages.
 
 The hosted website is not deployed by building this desktop app, and its existing APIs/queue schema remain in place. Shipping a new installer is separate from deploying the website.
+
+Detailed release measurements: [0.1.6 acceptance](ACCEPTANCE-0.1.6.md).
 
 ## Acceptance limits
 

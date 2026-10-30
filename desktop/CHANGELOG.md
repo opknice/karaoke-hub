@@ -6,7 +6,7 @@ Added an optional **คุณภาพสูง · HQ5** model alongside **เ�
 
 Switching restores original playback while the selected model prepares and resumes only for the same playing MV and active intent. Paused switching waits for Play; Stop cancels pending resumption while keeping the chosen model. Stale worker/video callbacks are revoked, and profile-aware delayed completion preserves the final musical tail. Both verified models and the isolated runtime are included in the installer.
 
-Source acceptance on Windows 11 / GTX 1650 Ti measured HQ5 first output at approximately 8.2 seconds. Automated tests cover model identity, bounded streaming/video, switching, pause/seek, cancellation, focus and delayed completion. The user selected HQ5 in the listening trial; separation quality still depends on the mix. Packaged release measurements are recorded in the implementation plan.
+Final packaged production acceptance on Windows 11 / GTX 1650 Ti measured Fast first output at 4.714 seconds and HQ5 at 8.220 seconds. HQ5 completed five minutes of continuous processing, plus pause/seek/resume, delayed MV completion and relaunch persistence. Automated tests cover model identity, bounded streaming/video, switching, pause/seek, cancellation, focus and delayed completion. The user selected HQ5 in the listening trial; separation quality still depends on the mix. Detailed measurements and limits are recorded in ACCEPTANCE-0.1.6.md.
 
 ## 0.1.5 — 2026-10-29
 
