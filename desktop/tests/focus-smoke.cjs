@@ -25,7 +25,10 @@ async function wait(read,check,label,timeout=45000){const until=Date.now()+timeo
   await shell.locator('#version-mv').click();
   await remote.getByRole('button',{name:'ค้นหา MV',exact:true}).waitFor();
   await checkReady('MV selector');
-  await shell.locator('#vocal-model').selectOption('hq5');await checkReady('HQ model selector');
+  await app.evaluate(({webContents})=>webContents.getAllWebContents().find(w=>w.getURL()==='karaoke-app://app/ui/index.html').focus());
+  await shell.locator('#vocal-model').focus();
+  await app.evaluate(({webContents})=>{const target=webContents.getFocusedWebContents();target.sendInputEvent({type:'keyDown',keyCode:'Down'});target.sendInputEvent({type:'keyUp',keyCode:'Down'});});
+  await wait(()=>shell.locator('#vocal-model').inputValue(),value=>value==='hq5','Native keyboard selects HQ');await checkReady('HQ keyboard model selector');
   await shell.locator('#vocal-model').selectOption('fast');await checkReady('Fast model selector');
   await typeIntoFocusedView('เพลงใหม่');
   await wait(()=>input.inputValue(),value=>value==='เพลงใหม่','Thai text reaches search without clicking input');

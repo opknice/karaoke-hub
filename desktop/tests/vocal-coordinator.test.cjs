@@ -71,3 +71,17 @@ test('HQ coordination carries its profile clock and disabling retains the select
  await s.coordinator.stop();selected='fast';await s.coordinator.stop();assert.equal(s.states.at(-1).vocalModelId,'fast');assert.equal(s.states.at(-1).vocalRemoverDelayMs,4500);
  }finally{await s.coordinator.stop();}
 });
+
+test('HQ audio may start just before the first delayed video frame after resume, within its startup deadline',async()=>{
+ const {getVocalModel}=require('../lib/vocal-models.cjs');let now=1000;
+ const s=setup({getProfile:()=>getVocalModel('hq5'),now:()=>now});
+ s.video.snapshot=async()=>({active:true,sourceEnded:false,lastLatencyMs:0});
+ try{await s.coordinator.start();const epoch=s.coordinator.epoch,token=s.bridge.at(-1).token;
+  await s.coordinator.transport({epoch,token,kind:'pause',paused:true});
+  await s.coordinator.transport({epoch,token,kind:'play',paused:false});
+  now+=8063;s.coordinator.audioState({vocalEpoch:s.coordinator.epoch,vocalRemoverStatus:'on'});
+  await s.coordinator.health();assert.equal(s.coordinator.enabled,true,'Allow the first video frame to arrive within the profile startup deadline');
+  now=11001;await s.coordinator.health();assert.equal(s.coordinator.enabled,false,'A missing first video frame still fails after the bounded deadline');
+  assert.equal(s.states.at(-1).vocalRemoverStatus,'error');
+ }finally{await s.coordinator.stop();}
+});

@@ -98,7 +98,8 @@ class LiveVocalCoordinator {
     const epoch=this.epoch;this.readingHealth=true;
     try{
       const snapshot=await this.bounded(this.video.snapshot(),500);
-      if(this.current(epoch)&&(!snapshot?.active||snapshot.failed||(!snapshot.sourceEnded&&(snapshot.lastLatencyMs<=0||snapshot.lastLatencyMs>this.profile.delayMs+(this.profile.id==='hq5'?500:400)))))await this.failure('ภาพและเสียงไม่ทันกำหนด จึงกลับไปใช้เสียงต้นฉบับ',epoch);
+      const firstFrameOverdue=snapshot?.lastLatencyMs<=0&&this.now()-this.requestedAt>=this.deadlineMs;
+      if(this.current(epoch)&&(!snapshot?.active||snapshot.failed||(!snapshot.sourceEnded&&(firstFrameOverdue||snapshot.lastLatencyMs>this.profile.delayMs+(this.profile.id==='hq5'?500:400)))))await this.failure('ภาพและเสียงไม่ทันกำหนด จึงกลับไปใช้เสียงต้นฉบับ',epoch);
     }catch(error){await this.failure(error.message,epoch);}finally{this.readingHealth=false;}
   }
   async transport(packet) {
