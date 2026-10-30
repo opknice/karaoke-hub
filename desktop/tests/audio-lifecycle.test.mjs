@@ -2,6 +2,27 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {AudioEngine} from '../audio/engine.mjs';
 
+test('continuous capture is buffered before context resume and separates session/AI epochs',async()=>{
+ const descriptor=Object.getOwnPropertyDescriptor(globalThis,'navigator'),savedContext=globalThis.AudioContext,savedWorklet=globalThis.AudioWorkletNode;
+ const nodes=[],fed=[],events=[];
+ class Node{constructor(_context,name,options){this.name=name;this.options=options;this.messages=[];this.port={postMessage:m=>this.messages.push(m)};if(name)nodes.push(this);}connect(n){return n;}disconnect(){}}
+ class Context{constructor(){this.sampleRate=44100;this.currentTime=0;this.audioWorklet={addModule:async()=>{}};this.destination=new Node();}createMediaStreamSource(){return new Node();}createAnalyser(){return new Node();}async resume(){assert.equal(nodes.find(n=>n.name==='desktop-vocal').options.processorOptions.continuousSessionEpoch,7,'First rendered quantum must already use the raw delay');}async close(){}}
+ Object.defineProperty(globalThis,'navigator',{configurable:true,value:{mediaDevices:{getDisplayMedia:async()=>{const tracks=[{stop(){}}];return{getTracks:()=>tracks,getAudioTracks:()=>tracks};}}}});globalThis.AudioContext=Context;globalThis.AudioWorkletNode=Node;
+ const engine=new AudioEngine(p=>events.push(p),{feedVocal:p=>fed.push(p)});
+ try{
+  await engine.apply('START_AUDIO',{buffered:true,sessionEpoch:7,sessionId:'session-queue-1'},1);
+  const vocal=nodes.find(n=>n.name==='desktop-vocal');
+  await engine.apply('BEGIN_VOCAL_AI',{epoch:9,modelId:'fast'},1);assert.equal(vocal.messages.at(-1).type,'BEGIN_AI');
+  vocal.port.onmessage({data:{type:'pcm',epoch:9,sessionEpoch:6,sequence:0,pcm:new Float32Array(88200)}});
+  vocal.port.onmessage({data:{type:'pcm',epoch:9,sessionEpoch:7,sequence:0,pcm:new Float32Array(88200)}});assert.equal(fed.length,1);assert.equal(fed[0].sessionEpoch,7);
+  vocal.port.onmessage({data:{type:'continuous-state',kind:'session',sessionEpoch:6,status:'playing'}});assert.equal(events.length,0);
+  vocal.port.onmessage({data:{type:'continuous-state',kind:'session',sessionEpoch:7,status:'playing'}});assert.equal(events.at(-1).vocalBufferActive,true);assert.equal(events.at(-1).vocalPlaybackDelayMs,8000);
+  await engine.apply('SET_VOCAL_MIX',{enabled:true},1);assert.equal(vocal.messages.at(-1).type,'SET_MIX');
+  await engine.apply('END_VOCAL_AI',{},1);assert.equal(engine.graph.sessionEpoch,7,'Model stop does not stop raw timeline');assert.equal(vocal.messages.at(-1).type,'END_AI');
+  await engine.apply('PREPARE_VOCAL_SESSION',{sessionEpoch:8,sessionId:'session-queue-2'},1);assert.equal(vocal.messages.at(-1).type,'BEGIN_SESSION');
+ }finally{await engine.stop();if(descriptor)Object.defineProperty(globalThis,'navigator',descriptor);else delete globalThis.navigator;globalThis.AudioContext=savedContext;globalThis.AudioWorkletNode=savedWorklet;}
+});
+
 test('an old track-ended close cannot report idle after a new capture starts', async () => {
   const navigatorDescriptor=Object.getOwnPropertyDescriptor(globalThis,'navigator');
   const originalContext=globalThis.AudioContext, originalWorklet=globalThis.AudioWorkletNode;
