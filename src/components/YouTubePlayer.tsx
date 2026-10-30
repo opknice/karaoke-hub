@@ -23,6 +23,7 @@ interface YouTubePlayerProps {
   nativePlaybackTime?: number | null;
   nativePlaybackSessionEpoch?: number;
   nativeVideoReady?: boolean;
+  nativeSourceEnded?: boolean;
 }
 
 export type TempoDirection = 'increase' | 'decrease';
@@ -81,6 +82,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   nativePlaybackTime=null,
   nativePlaybackSessionEpoch=0,
   nativeVideoReady=false,
+  nativeSourceEnded=false,
 }, ref) {
   const {
     nowPlaying,
@@ -122,10 +124,13 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   const delayedEndRef=useRef(new DelayedPlaybackEnd());
   const preparationAbortRef=useRef<AbortController|null>(null);
   const preparationSerialRef=useRef(0);
+  const preparationPendingRef=useRef(false);
   const preparedTrackRef=useRef<{videoId:string;itemId:string}|null>(null);
   const prepareAndLoadRef=useRef<(player:YT.Player,videoId:string,itemId:string,startSeconds:number)=>Promise<void>>(async()=>{});
   const nativeContinuousRef=useRef(nativeContinuous);
   nativeContinuousRef.current=nativeContinuous;
+  const nativeEndedRef=useRef(nativeSourceEnded);nativeEndedRef.current=nativeSourceEnded;
+  const playbackSyncRef=useRef({isPlaying,currentItemId:''});
   const nativePositionRef=useRef(nativePlaybackTime);
   nativePositionRef.current=nativeContinuous?nativePlaybackTime:null;
   const previousNativeEpochRef=useRef(nativePlaybackSessionEpoch);
@@ -310,8 +315,10 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   prepareAndLoadRef.current=async(player,targetVideoId,itemId,startSeconds)=>{
     const serial=++preparationSerialRef.current;
     preparationAbortRef.current?.abort();const abort=new AbortController();preparationAbortRef.current=abort;preparedTrackRef.current=null;
+    preparationPendingRef.current=true;
     const track={youtubeVideoId:targetVideoId,queueItemId:itemId,versionType:latestTrackRef.current.versionType};
     const result=await prepareNativePlayerTrack(track,{signal:abort.signal});
+    if(serial===preparationSerialRef.current)preparationPendingRef.current=false;
     if(result.cancelled||abort.signal.aborted||serial!==preparationSerialRef.current||latestTrackRef.current.itemId!==itemId||latestTrackRef.current.videoId!==targetVideoId||playerRef.current!==player)return;
     preparedTrackRef.current={videoId:targetVideoId,itemId};
     try{
@@ -555,10 +562,16 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   // Sync play/pause state
   useEffect(() => {
     if (!playerRef.current || !playerRef.current.playVideo) return;
-    if(preparedTrackRef.current?.itemId!==currentItemId)return;
+    const previous=playbackSyncRef.current;playbackSyncRef.current={isPlaying,currentItemId};
+    if(previous.isPlaying===isPlaying&&previous.currentItemId===currentItemId&&!nativeContinuousRef.current)return;
+    if(preparedTrackRef.current?.itemId!==currentItemId){
+      if(nativeContinuousRef.current&&!preparationPendingRef.current&&videoId&&currentItemId&&playerReadyRef.current)void prepareAndLoadRef.current(playerRef.current,videoId,currentItemId,playbackStartSeconds);
+      return;
+    }
     try {
       if (isPlaying) {
-        if(nativeContinuousRef.current&&delayedEndRef.current.pending&&playerRef.current.getPlayerState()===0)return;
+        if(nativeContinuousRef.current&&delayedEndRef.current.pending&&(nativeEndedRef.current||playerRef.current.getPlayerState()===0))return;
+        if(nativeContinuousRef.current&&playerRef.current.getPlayerState()===1)notifyNativePlayerReady({youtubeVideoId:videoId,queueItemId:currentItemId,versionType:latestTrackRef.current.versionType});
         playerRef.current.playVideo();
         if (currentItemId) verifyAutoplayStarted(playerRef.current, currentItemId);
       } else {
@@ -567,7 +580,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
         playerRef.current.pauseVideo();
       }
     } catch {}
-  }, [clearAutoplayCheck, currentItemId, isPlaying, verifyAutoplayStarted]);
+  }, [clearAutoplayCheck, currentItemId, isPlaying, nativePlaybackSessionEpoch,playbackStartSeconds,verifyAutoplayStarted,videoId]);
 
   useEffect(() => {
     if (!tempoExtensionReady && playbackRateRef.current !== 1) resetTempo(playerRef.current);
@@ -742,7 +755,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
         />
 
         {nowPlaying&&nativeContinuous&&!nativeVideoReady&&(
-          <div role="status" data-native-buffering="true" className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black text-sm text-zinc-300">
+          <div role="status" data-native-buffering="true" className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black/95 text-sm text-zinc-300">
             กำลังเตรียมเพลง · ประมาณ 8 วินาที
           </div>
         )}

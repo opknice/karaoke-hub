@@ -27,11 +27,16 @@ test('changing queue/unmount while preflight waits aborts it and old replies nev
   await act(async()=>pending[1].resolve({native:true,buffered:true}));assert.equal(s.loads.length,1);assert.equal(s.loads[0].videoId,'lmnopqrstuv');
  }finally{await s.unmount();}
 });
+test('explicit cancelled preflight does not load media and a later manual preparation can retry the selected MV',async()=>{
+ let attempt=0;const s=setup({prepare:async()=>++attempt===1?{native:true,buffered:false,cancelled:true}:{native:true,buffered:true}});
+ try{await s.render();await act(async()=>s.events.onReady({target:s.instances[0]}));assert.equal(s.loads.length,0);await s.render({nativeContinuous:true,nativePlaybackSessionEpoch:2});assert.equal(s.loads.length,1,'Manual Start can retry without selecting the song again');}
+ finally{await s.unmount();}
+});
 test('paused continuous tail resumes remaining time without restarting the ended source',async context=>{
  context.mock.timers.enable({apis:['setTimeout','Date']});const s=setup();const props={nativeContinuous:true,nativeVocalDelayMs:8000,nativePlaybackSessionEpoch:1,nativeSourceEnded:true,nativeVideoReady:true};
  try{await s.render(props);const player=s.instances[0];await act(async()=>s.events.onReady({target:player}));await act(async()=>s.events.onStateChange({target:player,data:1}));player.state=0;await act(async()=>s.events.onStateChange({target:player,data:0}));
   await act(async()=>context.mock.timers.tick(3000));s.karaoke.isPlaying=false;await s.render(props);await act(async()=>context.mock.timers.tick(20000));assert.equal(s.ends,0);
-  const plays=player.plays;s.karaoke.isPlaying=true;await s.render(props);assert.equal(player.plays,plays,'Resume the buffered tail without playVideo restarting the source');await act(async()=>context.mock.timers.tick(4999));assert.equal(s.ends,0);await act(async()=>context.mock.timers.tick(1));assert.equal(s.ends,1);
+  const plays=player.plays;player.state=2;s.karaoke.isPlaying=true;await s.render(props);assert.equal(player.plays,plays,'Resume the buffered tail without playVideo restarting the source, even when pauseVideo reports PAUSED after ENDED');await act(async()=>context.mock.timers.tick(4999));assert.equal(s.ends,0);await act(async()=>context.mock.timers.tick(1));assert.equal(s.ends,1);
  }finally{await s.unmount();}
 });
 test('native progress follows displayed timestamps rather than an eight-second media-time subtraction',async context=>{

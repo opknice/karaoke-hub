@@ -26,3 +26,8 @@ test('Stop invalidates an in-flight buffered capture immediately rather than wai
  const preparing=s.c.command('PREPARE_PLAYER_TRACK',mv());await turn();const stop=s.c.command('STOP_AUDIO');await turn();
  assert.ok(s.audio.some(a=>a.type==='STOP_AUDIO'),'Capture must be revoked before pending preflight resolves');finish({ok:true});await preparing;await stop;assert.equal(s.c.active,false);
 });
+test('a fast audible on event cannot be overwritten by the later toggle acknowledgement',async()=>{
+ const s=setup();await s.c.command('PREPARE_PLAYER_TRACK',mv());s.c.update({vocalRemoverReady:true});
+ s.c.setVocal=async()=>{s.c.update({vocalRemoverStatus:'on',vocalRemoverEnabled:true});await turn();};
+ assert.equal((await s.c.command('SET_VOCAL_REMOVER',{enabled:true})).ok,true);assert.equal(s.c.state.vocalRemoverStatus,'on');
+});

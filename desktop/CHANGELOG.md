@@ -1,5 +1,13 @@
 # Desktop releases
 
+## 0.1.7 — 2026-10-30
+
+Prepared MVs now share an eight-second original/audio/video timeline for both Fast and HQ5. The selected model runs in the background while original music plays. Vocal Remover switches by a 20ms time-aligned subtraction ramp, with no seek, rewind or fresh playback delay on a toggle. Original music continues during model loading, model changes and AI failure.
+
+Native preflight arms capture before source playback; bounded request cancellation prevents late preparation from reviving old capture. Pause/resume retains audio and compressed video history. Explicit seek/restart rebuilds the timeline. Original and AI tails both finish before advancing, and a paused tail resumes its remaining duration without restarting YouTube. Progress follows displayed-frame timestamps, including Tempo changes. Stop remains opted out until Start in the current app session.
+
+Both exact model weights/recipes, MV-only eligibility, local processing, key/one-percent Tempo and Thai keyboard focus are retained. Browser-only and older native clients retain their existing playback path. Initial model loading is separate from the eight-second startup buffer.
+
 ## 0.1.6 — 2026-10-30
 
 Added an optional **คุณภาพสูง · HQ5** model alongside **เร็ว (เดิม)**, which remains the default for new installations. The selected model is saved locally. HQ5 uses Instrumental HQ5 with sign-denoise and normalized overlap-add, an eight-second audio buffer and bounded compressed 720p/30 video. Fast retains the original model and 4.5-second buffer.

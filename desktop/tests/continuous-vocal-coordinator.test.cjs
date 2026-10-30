@@ -46,7 +46,7 @@ test('seek while paused starts a new generation and ignores stale frames/results
 });
 test('Stop during preflight revokes pending capture and later worker readiness cannot revive the session',async()=>{
  let release;const gate=new Promise(r=>{release=r;});const s=setup({ensureCapture:()=>gate});
- const pending=s.coordinator.prepare(s.track);await turn();await s.coordinator.stopSession({restorePosition:false});release();await assert.rejects(pending,/ยกเลิก|cancel/i);
+ const pending=s.coordinator.prepare(s.track);await turn();await s.coordinator.stopSession({restorePosition:false});release();await assert.rejects(pending,error=>error.name==='AbortError');
  await s.coordinator.beginAi();assert.equal(s.coordinator.active,false);assert.equal(s.audio.filter(c=>c.type==='BEGIN_VOCAL_AI').length,0);assert.equal(s.videoCalls.filter(c=>c.type==='start').length,0);
 });
 test('unready worker intent expires without stopping original playback',async context=>{

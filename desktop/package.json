@@ -1,6 +1,6 @@
 {
   "name": "karaoke-hub-desktop",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": true,
   "description": "KARAOKE.HUB Windows Player with local key and tempo controls",
   "author": "KARAOKE.HUB",
@@ -37,7 +37,8 @@
       "audio/**/*",
       "vocal/models.json",
       "package.json",
-      "!**/*.map"
+      "!**/*.map",
+      "!audio/assets/continuity-fixture.mjs"
     ],
     "extraResources": [
       {

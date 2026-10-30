@@ -312,6 +312,7 @@ export default function PlayerPage() {
             nativePlaybackTime={nativePlayback?.displayTime??null}
             nativePlaybackSessionEpoch={nativePlayback?.sessionEpoch??0}
             nativeVideoReady={nativePlayback?.videoReady??false}
+            nativeSourceEnded={nativePlayback?.sourceEnded??false}
             onTempoRateChange={handleTempoRateChange}
           />
         </div>

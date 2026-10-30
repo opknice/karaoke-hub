@@ -1,5 +1,6 @@
 const {randomBytes}=require('node:crypto');
 const {getVocalModel}=require('./vocal-models.cjs');
+const cancelled=()=>Object.assign(new Error('ยกเลิกการเตรียมเพลงแล้ว'),{name:'AbortError'});
 class ContinuousVocalCoordinator{
   constructor({worker,video,getTrack,ensureCapture,sendAudio,sendResult,publish,setBridge,getProfile=()=>getVocalModel('fast'),now=Date.now}){
     Object.assign(this,{worker,video,getTrack,ensureCapture,sendAudio,sendResult,publish,setBridge,getProfile,now});
@@ -29,14 +30,14 @@ class ContinuousVocalCoordinator{
     this.session=s;++this.epoch;this.setBridge(null);this.clearAiTimers(old);clearInterval(old?.monitor);
     try{
       if(old)await this.cleanup(old,{restorePosition:false});
-      if(!this.current(s))throw new Error('ยกเลิกการเตรียมเพลงแล้ว');
+      if(!this.current(s))throw cancelled();
       await this.ensureCapture({sessionEpoch:s.epoch,sessionId:s.id});
-      if(!this.current(s))throw new Error('ยกเลิกการเตรียมเพลงแล้ว');
+      if(!this.current(s))throw cancelled();
       s.prepared=true;this.setBridge({epoch:s.epoch,token:s.token});
       this.state({vocalBufferStatus:s.paused?'paused':'priming',vocalVideoReady:false,vocalSignalReady:false,vocalRemoverStatus:'ready',vocalRemoverError:null,vocalSourceEnded:false,vocalDisplayTime:null});
       if(s.paused)await this.sendAudio('PAUSE_VOCAL_SESSION',{});
       if(this.worker.ready)await this.beginAi();
-      if(!this.current(s))throw new Error('ยกเลิกการเตรียมเพลงแล้ว');
+      if(!this.current(s))throw cancelled();
       return{buffered:true,sessionId:s.id};
     }catch(error){if(this.session===s)await this.stopSession({restorePosition:false});throw error;}
   }
@@ -104,7 +105,7 @@ class ContinuousVocalCoordinator{
     const s=this.session;if(!this.current(s)||!s.videoStarted||s.healthReading)return;s.healthReading=true;
     try{
       const snap=await this.bounded(this.video.snapshot(),700);if(!this.current(s))return;
-      if(!snap?.active||snap.failed||(!s.paused&&!snap.sourceEnded&&((snap.lastLatencyMs<=0&&this.clock(s)-s.videoStartedAt>=10000)||snap.lastLatencyMs>8500))){await this.sessionFailure('ภาพและเสียงไม่ทันกำหนด กรุณาเริ่มระบบเสียงใหม่',s);return;}
+      if(!snap?.active||snap.failed||(!s.paused&&!snap.sourceEnded&&((snap.lastLatencyMs<=0&&this.clock(s)-s.videoStartedAt>=10000)||snap.lastLatencyMs>8500))){console.warn('Continuous video health:',JSON.stringify(snap));await this.sessionFailure('ภาพและเสียงไม่ทันกำหนด กรุณาเริ่มระบบเสียงใหม่',s);return;}
       this.state({vocalDisplayTime:snap.displayTime,vocalVideoReady:snap.lastLatencyMs>0,vocalSourceEnded:snap.sourceEnded});
     }catch(error){if(this.current(s))await this.sessionFailure(error.message,s);}finally{s.healthReading=false;}
   }

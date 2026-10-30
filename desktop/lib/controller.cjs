@@ -17,14 +17,14 @@ function initialState(profile) {
 }
 class DesktopAudioController {
   constructor({ sendAudio, setPlaybackRate, publish, setVocal=async enabled=>{if(enabled)throw new Error('ระบบ AI ยังไม่พร้อม');},selectVocalModel=()=>{throw new Error('Model selection unavailable');},initialModelId='fast', timeoutMs = 10000,
-    supportsContinuousVocal=false,preparePlayback=null,closePlayback=async()=>{},suspendVocal=async()=>{},attachVocalVideo=async()=>{} }) {
+    supportsContinuousVocal=false,preparePlayback=null,closePlayback=async()=>{},suspendVocal=async()=>{} }) {
     this.sendAudio = sendAudio; this.setPlaybackRate = setPlaybackRate; this.publish = publish;
     this.setVocal=setVocal;
     this.selectVocalModel=selectVocalModel;
     this.timeoutMs = timeoutMs; this.state = initialState(getVocalModel(initialModelId)); this.generation = 0;
     this.modelSelectionGeneration=0;this.requestedModelId=initialModelId;this.modelSwitchIntent=false;this.pendingVocalResume=null;
     this.queue = Promise.resolve();
-    Object.assign(this,{preparePlayback,closePlayback,suspendVocal,attachVocalVideo});this.userStoppedAudio=false;
+    Object.assign(this,{preparePlayback,closePlayback,suspendVocal});this.userStoppedAudio=false;this.userStopSerial=0;
     if(supportsContinuousVocal)this.state.supportsContinuousVocal=true;
   }
   update(patch) { this.state = { ...this.state, ...patch }; this.publish(this.state); }
@@ -128,7 +128,7 @@ class DesktopAudioController {
     // Revoke synchronously, before an in-flight start or IPC reply can arrive.
     if(type==='START_AUDIO')this.userStoppedAudio=false;
     if (type === 'STOP_AUDIO') {
-      if(!automatic)this.userStoppedAudio=true;
+      if(!automatic){this.userStoppedAudio=true;this.userStopSerial++;}
       const wasStarting=this.state.captureStatus==='starting';
       this.generation++; this.deactivate('installed_idle');void this.revokeVocal();void this.endPlayback({restorePosition:true});
       if(wasStarting&&this.state.supportsContinuousVocal)void this.audio('STOP_AUDIO').catch(()=>{});
@@ -136,7 +136,7 @@ class DesktopAudioController {
     const scheduledGeneration = this.generation;
     const job = async () => {
       try {
-        if (scheduledGeneration !== this.generation && type !== 'STOP_AUDIO'&&type!=='SET_VOCAL_MODEL') return { ok: false, error: 'คำสั่งเสียงถูกยกเลิกแล้ว', state: this.state };
+        if (scheduledGeneration !== this.generation && type !== 'STOP_AUDIO'&&type!=='SET_VOCAL_MODEL') return { ok: false,cancelled:true, error: 'คำสั่งเสียงถูกยกเลิกแล้ว', state: this.state };
         await this.apply(type, payload,{modelSelection,generation:scheduledGeneration});
         return { ok: true, state: this.state };
       } catch (error) {
@@ -145,7 +145,7 @@ class DesktopAudioController {
           this.deactivate('error', error.message);
           void this.audio('STOP_AUDIO').catch(() => {});
         }
-        return { ok: false, error: error.message, state: this.state };
+        return { ok: false,...(error.name==='AbortError'?{cancelled:true}:{}), error: error.message, state: this.state };
       }
     };
     const result = this.queue.then(job);
@@ -180,9 +180,9 @@ class DesktopAudioController {
           if(!this.state.vocalRemoverEligible||!this.state.currentQueueItemId)throw new Error('Vocal Remover ใช้ได้เฉพาะเพลง MV ที่กำลังเล่น');
         }
         await this.setVocal(payload.enabled,{restorePosition:true});
-        this.update({vocalRemoverEnabled:payload.enabled,vocalRemoverStatus:payload.enabled?'preparing':this.state.vocalRemoverReady?'ready':'unavailable',vocalRemoverError:null});return;
+        this.update({vocalRemoverEnabled:payload.enabled,...(this.state.supportsContinuousVocal?{}:{vocalRemoverStatus:payload.enabled?'preparing':this.state.vocalRemoverReady?'ready':'unavailable'}),vocalRemoverError:null});return;
       case 'START_AUDIO': {
-        if(this.preparePlayback&&this.state.currentVersionType==='mv'&&!this.state.vocalBufferActive){await this.prepareCurrentPlayback();if(this.state.vocalPlaybackPlaying!==false)await this.attachVocalVideo();return;}
+        if(this.preparePlayback&&this.state.currentVersionType==='mv'&&!this.state.vocalBufferActive){await this.prepareCurrentPlayback();return;}
         if (this.active) return;
         const generation = ++this.generation;
         this.update({ captureStatus: 'starting', lastError: null });

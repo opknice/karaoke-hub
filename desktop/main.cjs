@@ -116,7 +116,7 @@ app.whenReady().then(async()=>{
   const modelPaths=id=>({python:path.join(vocalRoot,'runtime/python/python.exe'),worker:path.join(vocalRoot,'worker.py'),model:path.join(vocalRoot,'runtime',getVocalModel(id).filename)});
   controller=new DesktopAudioController({sendAudio,setPlaybackRate:rate=>setMediaPlaybackRate(player.webContents,playerUrl,rate),publish,initialModelId:selectedModel,supportsContinuousVocal:true,
     setVocal:enabled=>vocal.setRemoval(enabled),
-    suspendVocal:()=>vocal.suspendAi(),closePlayback:options=>vocal.stopSession(options),attachVocalVideo:()=>vocal.attachVideo(),
+    suspendVocal:()=>vocal.suspendAi(),closePlayback:options=>vocal.stopSession(options),
     preparePlayback:track=>vocal.prepare({...track,origin:new URL(playerUrl).origin}),
     selectVocalModel:id=>{
       controller.update({vocalPreferenceError:null});
