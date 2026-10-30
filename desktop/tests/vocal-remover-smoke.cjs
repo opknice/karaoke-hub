@@ -74,6 +74,7 @@ async function wait(read,check,label,timeout=30000){const until=Date.now()+timeo
    assert.equal((await state()).vocalRemoverEnabled,true);
   }
   if(process.argv.includes('--switch')){
+   if(process.env.KARAOKE_VOCAL_TRACE){await media('(()=>{window.__vocalTrace=[];const v=document.querySelector("video.html5-main-video")||document.querySelector("video");for(const kind of ["pause","play","playing","seeking","seeked","ended"])v.addEventListener(kind,()=>window.__vocalTrace.push({kind,paused:v.paused,ended:v.ended,time:v.currentTime,at:Date.now()}));})()');await remote.evaluate(()=>{window.__vocalMessages=[];window.addEventListener('message',event=>{if(event.data?.type==='VOCAL_PLAYBACK_STATE')window.__vocalMessages.push({at:Date.now(),...event.data.payload});});});}
    const other=getVocalModel(profile.id==='hq5'?'fast':'hq5');
    await shell.locator('#pitch-up').click();await shell.locator('#tempo-up').click();
    const beforeSwitch=await state();
@@ -83,6 +84,7 @@ async function wait(read,check,label,timeout=30000){const until=Date.now()+timeo
    assert.ok(switched.vocalRemoverStartDelayMs<=other.startupDeadlineMs);
    await media('(document.querySelector("video.html5-main-video")||document.querySelector("video")).pause()');
    await wait(state,s=>s.vocalRemoverStatus==='paused','Other mode paused before switching');
+   if(process.env.KARAOKE_VOCAL_TRACE)console.log('Paused before selection',await state(),await media('window.__vocalTrace'));
    await shell.locator('#vocal-model').selectOption(profile.id);
    await wait(state,s=>s.vocalModelId===profile.id&&s.vocalRemoverReady&&s.vocalResumePending,'Paused model is ready without starting playback',20000);
    assert.equal((await state()).vocalRemoverEnabled,false);assert.equal(await media('(document.querySelector("video.html5-main-video")||document.querySelector("video")).paused'),true);
@@ -135,7 +137,7 @@ async function wait(read,check,label,timeout=30000){const until=Date.now()+timeo
   }
   console.log('PASS actual GPU vocal removal on MV, selected profile deadline, delayed video, independent search selection, keyboard focus and original restoration',{modelId:profile.id});
   await remote.evaluate(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'End',code:'End',bubbles:true,cancelable:true})));
- }catch(error){if(shell)console.error('State',await shell.evaluate(()=>window.desktopPlayer.command('REQUEST_STATUS')));if(remote)console.error((await remote.locator('body').innerText()).slice(-1000));throw error;}
+ }catch(error){if(shell)console.error('State',await shell.evaluate(()=>window.desktopPlayer.command('REQUEST_STATUS')));if(remote){console.error((await remote.locator('body').innerText()).slice(-1000));if(process.env.KARAOKE_VOCAL_TRACE){console.error('Player transport trace',await remote.evaluate(()=>window.__vocalMessages));console.error('Media trace',await app.evaluate(async({webContents},url)=>{const w=webContents.getAllWebContents().find(w=>w.getURL().startsWith(url));return w.mainFrame.frames.find(f=>/^https:\/\/www\.youtube(?:-nocookie)?\.com\/embed\//.test(f.url))?.executeJavaScript('window.__vocalTrace');},url));}}throw error;}
  finally{await app.close();}
  if(process.argv.includes('--persistence')){
   const reopened=await electron.launch({executablePath:process.env.KARAOKE_EXECUTABLE||require('electron'),args:process.env.KARAOKE_EXECUTABLE?[]:[path.resolve(__dirname,'..')],env,timeout:60000});

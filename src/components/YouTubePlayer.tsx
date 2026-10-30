@@ -546,10 +546,11 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
   }, [resetTempo, tempoExtensionReady]);
 
   // Sync volume / mute state
+  const nativeVocalTransportActive=nativeVocalTransport||nativeVocalDelayMs>0;
   useEffect(()=>{
-    if((!nativeVocalTransport&&!nativeVocalDelayMs)||!videoId||!currentItemId)return;
+    if(!nativeVocalTransportActive||!videoId||!currentItemId)return;
     window.postMessage({source:VOCAL_CUT_PAGE_SOURCE,version:1,type:'VOCAL_PLAYBACK_STATE',payload:{youtubeVideoId:videoId,queueItemId:currentItemId,playing:isPlaying}},location.origin);
-  },[nativeVocalTransport,nativeVocalDelayMs,currentItemId,videoId,isPlaying]);
+  },[nativeVocalTransportActive,currentItemId,videoId,isPlaying]);
 
   useEffect(() => {
     if (!playerRef.current) return;

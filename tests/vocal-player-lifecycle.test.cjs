@@ -40,10 +40,15 @@ for(const delay of [4500,8000])for(const action of ['restart','seek','playing','
    if(action.startsWith('disable'))tree.update(React.createElement(component,{ref,tempoExtensionReady:true,onTempoRateChange:noop,nativeVocalDelayMs:0,nativeVocalTransport:true}));
    if(action==='playing'||action==='disable-and-replay')events.onStateChange({target:player,data:1});
   });
-  if(action.startsWith('disable'))assert.ok(messages.length>beforeMessages,'Native playback metadata continues while separation is off');
+  if(action.startsWith('disable'))assert.equal(messages.length,beforeMessages,'Changing only AI delay must not echo stale playing state and undo a native pause during a model switch');
   await act(async()=>context.mock.timers.tick(delay+1000));
   assert.equal(ended,action==='disable-without-replay'?1:0,'An actual replay cancels the old tail; a failed replay must not strand completion');
   if(action!=='disable-without-replay')await act(async()=>events.onStateChange({target:player,data:0}));
   await act(async()=>context.mock.timers.tick(delay));assert.equal(ended,1,'A subsequent actual end still advances once');
+  if(action.startsWith('disable'))for(const playing of [false,true]){
+   karaoke.isPlaying=playing;
+   await act(async()=>tree.update(React.createElement(component,{ref,tempoExtensionReady:true,onTempoRateChange:noop,nativeVocalDelayMs:0,nativeVocalTransport:true})));
+   assert.equal(messages.at(-1).payload.playing,playing,'Actual pause/play changes still reach native while AI is off');
+  }
  }finally{if(tree)await act(async()=>tree.unmount());}
 });
