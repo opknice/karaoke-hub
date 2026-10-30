@@ -35,6 +35,7 @@
       "lib/**/*",
       "ui/**/*",
       "audio/**/*",
+      "vocal/models.json",
       "package.json",
       "!**/*.map"
     ],

@@ -1,0 +1,16 @@
+{
+  "fast": {
+    "id": "fast", "name": "เร็ว (เดิม)", "filename": "UVR_MDXNET_Main.onnx",
+    "bytes": 66759214, "sha256": "8289784cda38543ff431add4070662813311a8cccfc0112ca82f76d9dba2b4ca",
+    "stem": "Vocals", "fft": 7680, "hop": 1024, "bins": 3072, "frames": 256, "compensation": 1.043,
+    "delayMs": 4500, "startupDeadlineMs": 5000, "spanMode": "overlap", "maxResultFrames": 55124,
+    "requiresDenoise": false, "maxOnePassMs": 800, "maxTwoPassMs": 10000, "videoBufferMode": "raw"
+  },
+  "hq5": {
+    "id": "hq5", "name": "คุณภาพสูง · HQ5", "filename": "UVR-MDX-NET-Inst_HQ_5.onnx",
+    "bytes": 59074342, "sha256": "811cb24095d865763752310848b7ec86aeede0626cb05749ab35350e46897000",
+    "stem": "Instrumental", "fft": 5120, "hop": 1024, "bins": 2560, "frames": 256, "compensation": 1.01,
+    "delayMs": 8000, "startupDeadlineMs": 10000, "spanMode": "final", "maxResultFrames": 65280,
+    "requiresDenoise": true, "maxOnePassMs": 1000, "maxTwoPassMs": 1100, "videoBufferMode": "encoded"
+  }
+}

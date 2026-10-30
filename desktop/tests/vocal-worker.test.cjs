@@ -50,3 +50,24 @@ test('worker input queue is bounded and nonfinite source PCM is rejected',()=>{
   assert.equal(worker.feed({epoch:1,sequence:3,pcm:new Float32Array(88200)}),false,'Failed stream stays stopped until reset');
  }finally{worker.stop();}
 });
+
+test('a requested HQ model cannot become ready using the old model identity or reduced-quality calibration',()=>{
+ const child=new EventEmitter();child.stdin=new PassThrough();child.stdout=new PassThrough();child.stderr=new PassThrough();child.kill=()=>{};
+ const failures=[];const worker=new VocalWorker({profile:{id:'hq5'},paths:{python:__filename,worker:__filename,model:__filename},spawn:()=>child,onFailure:value=>failures.push(value)});
+ try{worker.start();child.stdout.write(JSON.stringify({type:'ready',modelId:'fast',provider:'DirectML',name:'GPU',modelSha256:sha,onePassMs:300,twoPassMs:600,denoise:true})+'\n');assert.equal(worker.ready,false);assert.equal(failures.length,1);}finally{worker.stop();}
+});
+test('switching the worker model revokes old readiness and accepts only its new child output',()=>{
+ const children=[];const makeChild=()=>{const child=new EventEmitter();child.stdin=new PassThrough();child.stdout=new PassThrough();child.stderr=new PassThrough();child.kill=()=>{child.killed=true;};children.push(child);return child;};
+ const worker=new VocalWorker({paths:{python:__filename,worker:__filename,model:__filename},spawn:makeChild});
+ const send=(child,profile,modelSha256)=>child.stdout.write(JSON.stringify({type:'ready',modelId:profile,provider:'DirectML',name:'GPU',modelSha256,onePassMs:300,twoPassMs:600,denoise:true})+'\n');
+ try{worker.start();send(children[0],'fast',sha);assert.equal(worker.ready,true);
+ assert.equal(typeof worker.selectModel,'function');worker.selectModel({profile:{id:'hq5'},paths:{python:__filename,worker:__filename,model:__filename}});
+ assert.equal(children[0].killed,true);assert.equal(worker.ready,false);assert.equal(children.length,2);
+ send(children[0],'fast',sha);assert.equal(worker.ready,false);send(children[1],'hq5','811cb24095d865763752310848b7ec86aeede0626cb05749ab35350e46897000');assert.equal(worker.ready,true);assert.equal(worker.profile.id,'hq5');
+ }finally{worker.stop();}
+});
+
+test('incomplete model selection cannot terminate the currently ready worker',()=>{
+ const {worker,child}=setup();
+ try{assert.throws(()=>worker.selectModel({profile:{},paths:{python:__filename,worker:__filename,model:__filename}}),/model|profile/i);assert.equal(worker.ready,true);assert.notEqual(child.killed,true);}finally{worker.stop();}
+});

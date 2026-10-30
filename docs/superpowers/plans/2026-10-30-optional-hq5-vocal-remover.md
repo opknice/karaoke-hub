@@ -31,7 +31,7 @@
 
 ---
 
-### Task1: Canonical model profiles and worker model identity
+### Task 1: Canonical model profiles and worker model identity
 
 **Files:** Create `desktop/vocal/models.json`, `desktop/lib/vocal-models.cjs`, `desktop/tests/vocal-models.test.cjs`. Modify `desktop/vocal/worker.py`, `desktop/lib/vocal-worker.cjs`, Python/Node worker tests and packaging file allowlist.
 
@@ -43,7 +43,7 @@
 - [ ] Run those Node tests and `python -m unittest discover -s desktop/tests -p vocal_worker_test.py` with the known venv interpreter; all pass.
 - [ ] Commit Task1 with exact model identity and worker lifecycle changes.
 
-### Task2: Bounded HQ separator and profile-aware audio buffer
+### Task 2: Bounded HQ separator and profile-aware audio buffer
 
 **Files:** Create `desktop/vocal/hq_separator.py`; modify `desktop/vocal/separator.py`, `desktop/vocal/worker.py`, `desktop/audio/vocal-buffer.mjs`, `desktop/audio/vocal-processor.js`, `desktop/audio/engine.mjs`. Extend `desktop/tests/vocal_worker_test.py`, `vocal-buffer.test.mjs`, `audio-lifecycle.test.mjs`.
 
@@ -55,7 +55,7 @@
 - [ ] Run the focused suites and real portable HQ paced-worker smoke, checking finite stereo spans, exact timestamps, throughput and no old-model regression.
 - [ ] Commit Task2.
 
-### Task3: Compressed HQ video buffering
+### Task 3: Compressed HQ video buffering
 
 **Files:** Create `desktop/lib/vocal-video-codec.cjs` and `desktop/tests/vocal-video-codec.test.cjs`; modify `desktop/lib/vocal-video.cjs`, `desktop/tests/vocal-video-smoke.cjs` and add/extend a real codec Electron smoke fixture.
 
@@ -67,7 +67,7 @@
 - [ ] Run real Electron fixture at8s, checking rendered content, timing,720p target, bounded memory/queues, pause/seek/reset/stop/ended draining. Failure restores original; no silent resolution downgrade.
 - [ ] Commit Task3.
 
-### Task4: Native selector, responsive runtime switching and coordinator profiles
+### Task 4: Native selector, responsive runtime switching and coordinator profiles
 
 **Files:** Modify `desktop/main.cjs`, `desktop/lib/controller.cjs`, `desktop/lib/policy.cjs`, `desktop/lib/vocal-coordinator.cjs`, `desktop/ui/index.html`, `shell.js`, `style.css`; create small settings/runtime helper modules only if they keep lifecycle responsibilities clear. Extend controller/coordinator/policy/focus tests.
 
@@ -79,7 +79,7 @@
 - [ ] Run Node suites, actual native keyboard selector/Thai typing tests, and model switching on a real MV. Verify no controls remain blocked by worker loading and Fast still begins within5s.
 - [ ] Commit Task4.
 
-### Task5: Hosted profile-aware delayed completion
+### Task 5: Hosted profile-aware delayed completion
 
 **Files:** Modify `src/lib/vocal-cut-bridge.ts`, `src/lib/vocal-playback.ts`, `src/components/YouTubePlayer.tsx` and relevant Player integration. Extend `tests/vocal-playback.test.cjs`, `tests/vocal-player-lifecycle.test.cjs`.
 
@@ -91,7 +91,7 @@
 - [ ] Run focused and full root tests, TypeScript/lint and production Next build; all pass.
 - [ ] Commit Task5.
 
-### Task6: Packaging, independent review and release acceptance
+### Task 6: Packaging, independent review and release acceptance
 
 **Files:** Update `desktop/scripts/prepare-vocal.cjs`, `.vocal-build.example.json`, package/lock version0.1.6, README/CHANGELOG and native smoke scripts; record measurements in this plan.
 

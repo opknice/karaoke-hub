@@ -8,15 +8,19 @@ import sys
 import threading
 import time
 
-MODEL_SHA='8289784cda38543ff431add4070662813311a8cccfc0112ca82f76d9dba2b4ca'
+def model_profile(model_id):
+    profiles=json.loads(Path(__file__).with_name('models.json').read_text(encoding='utf-8'))
+    if type(model_id) is not str or model_id not in profiles:raise ValueError('Unknown vocal model profile')
+    return profiles[model_id]
 write_lock=threading.Lock()
 
 def emit(value):
     with write_lock: print(json.dumps(value,ensure_ascii=False,separators=(',',':')),flush=True)
 
-def load_model(path):
+def load_model(path,model_id='fast'):
+    profile=model_profile(model_id)
     model=Path(path)
-    if not model.is_file() or model.stat().st_size!=66759214 or hashlib.sha256(model.read_bytes()).hexdigest()!=MODEL_SHA:
+    if not model.is_file() or model.stat().st_size!=profile['bytes'] or hashlib.sha256(model.read_bytes()).hexdigest()!=profile['sha256']:
         raise ValueError('Vocal model integrity check failed')
     import numpy as np
     import onnxruntime as ort
@@ -31,22 +35,22 @@ def load_model(path):
     if session.get_providers()[0]!='DmlExecutionProvider':raise ValueError('GPU execution was not selected')
     if len(session.get_inputs())!=1 or len(session.get_outputs())!=1:raise ValueError('Unsupported model interface')
     for entry in [session.get_inputs()[0],session.get_outputs()[0]]:
-        if entry.type!='tensor(float)' or entry.shape!=[1,4,3072,256]:raise ValueError('Vocal model tensor shape mismatch')
+        if entry.type!='tensor(float)' or entry.shape!=[1,4,profile['bins'],profile['frames']]:raise ValueError('Vocal model tensor shape mismatch')
     name=session.get_inputs()[0].name
     predict=lambda spectrum:session.run(None,{name:spectrum})[0]
-    silence=np.zeros((1,4,3072,256),dtype=np.float32)
+    silence=np.zeros((1,4,profile['bins'],profile['frames']),dtype=np.float32)
     predict(silence) # Compile/warm before reporting readiness.
     started=time.perf_counter();predict(silence);one=time.perf_counter()-started
     started=time.perf_counter();predict(silence);predict(-silence);two=time.perf_counter()-started
-    if one>.8:raise ValueError('GPU is too slow for the five-second live audio deadline')
-    return predict,two<.9,{'name':adapter['name'],'provider':'DirectML','onePassMs':round(one*1000),'twoPassMs':round(two*1000),'modelSha256':MODEL_SHA}
+    if one*1000>profile['maxOnePassMs'] or (profile['requiresDenoise'] and two*1000>profile['maxTwoPassMs']):raise ValueError('GPU is too slow for the selected live model deadline')
+    return predict,profile['requiresDenoise'] or two<.9,{'modelId':model_id,'name':adapter['name'],'provider':'DirectML','onePassMs':round(one*1000),'twoPassMs':round(two*1000),'modelSha256':profile['sha256']}
 
 def main():
     sys.stdout.reconfigure(encoding='utf-8')
     sys.path.insert(0,str(Path(__file__).resolve().parent))
-    parser=argparse.ArgumentParser();parser.add_argument('--model',required=True)
+    parser=argparse.ArgumentParser();parser.add_argument('--model',required=True);parser.add_argument('--model-id',default='fast')
     arguments=parser.parse_args()
-    predict,denoise,details=load_model(arguments.model)
+    predict,denoise,details=load_model(arguments.model,arguments.model_id)
     from separator import RollingSeparator
     from protocol import decode_pcm,encode_vocals,valid_epoch
     separator=RollingSeparator(predict,denoise=denoise)
@@ -68,6 +72,7 @@ def main():
                 message=json.loads(line)
                 if not isinstance(message,dict) or not valid_epoch(message.get('epoch')):raise ValueError('Invalid worker epoch')
                 epoch=message['epoch']
+                if message.get('modelId','fast')!=arguments.model_id:raise ValueError('Audio model identity mismatch')
                 with lock:
                     if epoch<state['epoch']:continue
                     if epoch!=state['epoch'] or message.get('type')=='reset':
@@ -77,7 +82,7 @@ def main():
                 try:jobs.put_nowait((epoch,message['sequence'],pcm))
                 except queue.Full:
                     with lock:clear_jobs()
-                    emit({'type':'error','epoch':epoch,'error':'AI cannot keep up with playback; its input queue is full'})
+                    emit({'type':'error','modelId':arguments.model_id,'epoch':epoch,'error':'AI cannot keep up with playback; its input queue is full'})
         except Exception as error:
             emit({'type':'fatal','error':str(error)})
         finally:
@@ -102,11 +107,11 @@ def main():
             started=time.perf_counter();result=separator.push(pcm);elapsed=time.perf_counter()-started
             with lock:
                 if epoch!=state['epoch']:continue
-            packet={'type':'result','epoch':epoch,'sequence':index,'computeMs':round(elapsed*1000),'frames':0}
+            packet={'type':'result','modelId':arguments.model_id,'epoch':epoch,'sequence':index,'computeMs':round(elapsed*1000),'frames':0}
             if result:
                 packet.update(startFrame=result['start_frame'],frames=result['vocals'].shape[1],pcm=encode_vocals(result))
             emit(packet)
-        except Exception as error:emit({'type':'error','epoch':epoch,'error':str(error)})
+        except Exception as error:emit({'type':'error','modelId':arguments.model_id,'epoch':epoch,'error':str(error)})
     return 0
 
 if __name__=='__main__':
