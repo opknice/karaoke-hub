@@ -10,4 +10,5 @@ for (const file of ['dsp-core.mjs', 'stft-center-suppressor.mjs', 'center-attenu
   if (fs.existsSync(obsolete)) fs.unlinkSync(obsolete);
 }
 for (const file of files) fs.copyFileSync(path.join(__dirname, '../../browser-extension', file), path.join(target, file));
+fs.copyFileSync(path.join(__dirname,'../vocal/models.json'),path.join(target,'vocal-models.json'));
 console.log(`Prepared ${files.length} shared DSP modules`);

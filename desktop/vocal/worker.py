@@ -53,7 +53,10 @@ def main():
     predict,denoise,details=load_model(arguments.model,arguments.model_id)
     from separator import RollingSeparator
     from protocol import decode_pcm,encode_vocals,valid_epoch
-    separator=RollingSeparator(predict,denoise=denoise)
+    if arguments.model_id=='hq5':
+        from hq_separator import HQSeparator
+        separator=HQSeparator(predict,denoise=denoise)
+    else:separator=RollingSeparator(predict,denoise=denoise)
     jobs=queue.Queue(maxsize=2)
     state={'epoch':0,'alive':True}
     lock=threading.Lock()

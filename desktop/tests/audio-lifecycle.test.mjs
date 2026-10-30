@@ -73,6 +73,14 @@ test('live vocal audio schedules a common clock, feeds only current epoch PCM an
     assert.equal(vocal.messages.at(-1).type,'DISABLE');
     vocal.port.onmessage({data:{type:'pcm',epoch:4,sequence:1,pcm:new Float32Array(88200)}});
     assert.equal(fed.length,1);
+    await engine.apply('START_VOCAL',{epoch:5,startWallMs:Date.now()+100,modelId:'hq5'},1);
+    assert.equal(vocal.messages.at(-1).delaySeconds,8);
+    assert.equal(vocal.messages.at(-1).spanMode,'final');
+    assert.equal(vocal.messages.at(-1).maxResultFrames,65280);
+    vocal.port.onmessage({data:{type:'vocal-state',epoch:5,status:'preparing'}});
+    assert.equal(events.at(-1).patch.vocalRemoverDelayMs,8000);
+    await assert.rejects(()=>engine.apply('START_VOCAL',{epoch:6,modelId:'../other'},1),/model|profile/i);
+    assert.equal(engine.graph.vocalEpoch,5,'A rejected profile does not revoke the active valid epoch');
   }finally{
     await engine.stop();if(descriptor)Object.defineProperty(globalThis,'navigator',descriptor);else delete globalThis.navigator;
     globalThis.AudioContext=savedContext;globalThis.AudioWorkletNode=savedWorklet;

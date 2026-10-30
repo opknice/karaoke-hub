@@ -1,3 +1,4 @@
+import vocalModels from './assets/vocal-models.json' with {type:'json'};
 export class AudioEngine {
   constructor(report,{feedVocal=()=>{}}={}) { this.report=report;this.feedVocal=feedVocal; this.epoch=0; this.graph=null; this.key=0; }
   async stop() {
@@ -29,13 +30,13 @@ export class AudioEngine {
       const inputMeter=context.createAnalyser(), outputMeter=context.createAnalyser();
       inputMeter.fftSize=2048; outputMeter.fftSize=8192;
       source.connect(inputMeter).connect(vocal).connect(pitch).connect(outputMeter).connect(context.destination);
-      const graph={stream,context,pitch,vocal,vocalEpoch:0,inputMeter,outputMeter,nodes:[source,inputMeter,vocal,pitch,outputMeter]};
+      const graph={stream,context,pitch,vocal,vocalEpoch:0,vocalProfile:vocalModels.fast,inputMeter,outputMeter,nodes:[source,inputMeter,vocal,pitch,outputMeter]};
       this.graph=graph;
       vocal.port.onmessage=({data})=>{
         if(this.graph!==graph||!graph.vocalEpoch||data?.epoch!==graph.vocalEpoch)return;
         if(data.type==='pcm')this.feedVocal({epoch:data.epoch,sequence:data.sequence,pcm:data.pcm});
         if(data.type==='vocal-state')report({vocalRemoverStatus:data.status,vocalEpoch:data.epoch,
-          vocalRemoverDelayMs:data.delayFrames?data.delayFrames/context.sampleRate*1000:4500,vocalRemoverError:data.error??null,
+          vocalRemoverDelayMs:data.delayFrames?data.delayFrames/context.sampleRate*1000:graph.vocalProfile.delayMs,vocalRemoverError:data.error??null,
           vocalOutputLatencyMs:1000*((context.baseLatency||0)+(context.outputLatency||0))+(this.key?1024/context.sampleRate*1000:0)});
       };
       graph.timer=setInterval(()=>{
@@ -67,9 +68,12 @@ export class AudioEngine {
     switch(type) {
       case 'START_VOCAL': {
         if(g.context.sampleRate!==44100)throw new Error('อุปกรณ์เสียงไม่รองรับการตัดเสียงร้องที่ 44100 Hz');
+        const id=payload.modelId??'fast';
+        if(typeof id!=='string'||!Object.hasOwn(vocalModels,id))throw new Error('Unknown vocal model profile');
+        const profile=vocalModels[id];g.vocalProfile=profile;
         g.vocalEpoch=payload.epoch;
         const startFrame=Math.ceil((g.context.currentTime+Math.max(0,(payload.startWallMs-Date.now())/1000))*g.context.sampleRate);
-        g.vocal.port.postMessage({type:'ENABLE',epoch:payload.epoch,startFrame});break;
+        g.vocal.port.postMessage({type:'ENABLE',epoch:payload.epoch,startFrame,delaySeconds:profile.delayMs/1000,spanMode:profile.spanMode,maxResultFrames:profile.maxResultFrames});break;
       }
       case 'VOCAL_RESULT':
         if(payload.epoch===g.vocalEpoch)g.vocal.port.postMessage({...payload,type:'RESULT'},[payload.pcm.buffer]);break;

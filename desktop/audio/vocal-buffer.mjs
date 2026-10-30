@@ -1,15 +1,20 @@
 /** Timestamped local delay line and vocal overlap-add. Never runs inference. */
 export class LiveVocalBuffer {
   constructor({sampleRate,delaySeconds=4.5,onPcm=()=>{},onState=()=>{}}) {
-    if(!Number.isSafeInteger(sampleRate)||sampleRate<8||sampleRate>96000||!Number.isFinite(delaySeconds)||delaySeconds<1||delaySeconds>5)throw new Error('Invalid live audio clock');
+    if(!Number.isSafeInteger(sampleRate)||sampleRate<8||sampleRate>96000||!Number.isFinite(delaySeconds)||delaySeconds<1||delaySeconds>8)throw new Error('Invalid live audio clock');
+    this.defaultDelaySeconds=delaySeconds;
     this.rate=sampleRate;this.delay=Math.round(sampleRate*delaySeconds);this.capacity=sampleRate*12;this.overlap=Math.floor(sampleRate/8);
     this.onPcm=onPcm;this.onState=onState;
     this.rawL=new Float32Array(this.capacity);this.rawR=new Float32Array(this.capacity);
     this.vocalL=new Float32Array(this.capacity);this.vocalR=new Float32Array(this.capacity);this.weights=new Float32Array(this.capacity);
     this.enabled=false;
   }
-  enable({epoch,startFrame=0}) {
+  enable({epoch,startFrame=0,delaySeconds=this.defaultDelaySeconds,spanMode='overlap',maxResultFrames}) {
     if(!Number.isSafeInteger(epoch)||epoch<1||epoch>=2**31||!Number.isSafeInteger(startFrame)||startFrame<0)throw new Error('Invalid live audio epoch');
+    if(!Number.isFinite(delaySeconds)||delaySeconds<1||delaySeconds>8||!['overlap','final'].includes(spanMode))throw new Error('Invalid live audio profile');
+    const limit=maxResultFrames??Math.ceil(this.rate*(spanMode==='final'?1.5:1.25));
+    if(!Number.isSafeInteger(limit)||limit<1||limit>this.rate*2)throw new Error('Invalid live audio span limit');
+    this.delay=Math.round(this.rate*delaySeconds);this.spanMode=spanMode;this.maxResultFrames=limit;this.finalReceivedEnd=0;
     this.epoch=epoch;this.startFrame=startFrame;this.enabled=true;this.paused=false;this.started=false;this.failed=false;this.playing=false;
     this.captured=0;this.played=0;this.chunkOffset=0;this.sequence=0;this.chunk=new Float32Array(this.rate*2);
     this.vocalL.fill(0);this.vocalR.fill(0);this.weights.fill(0);
@@ -19,8 +24,16 @@ export class LiveVocalBuffer {
   receive({epoch,startFrame,pcm}) {
     if(!this.enabled||epoch!==this.epoch||!(pcm instanceof Float32Array)||pcm.length%2||!Number.isSafeInteger(startFrame)||startFrame<0)return false;
     const frames=pcm.length/2;
-    if(frames<1||frames>Math.ceil(this.rate*1.25)||startFrame+frames>this.captured||startFrame+frames<=this.played)return false;
+    if(frames<1||frames>this.maxResultFrames||startFrame+frames>this.captured||startFrame+frames<=this.played)return false;
+    if(this.spanMode==='final'&&(startFrame!==this.finalReceivedEnd||startFrame<this.played))return false;
     for(const sample of pcm)if(!Number.isFinite(sample))return false;
+    if(this.spanMode==='final'){
+      for(let i=0;i<frames;i++){
+        const slot=(startFrame+i)%this.capacity;
+        this.vocalL[slot]=pcm[i*2];this.vocalR[slot]=pcm[i*2+1];this.weights[slot]=1;
+      }
+      this.finalReceivedEnd=startFrame+frames;return true;
+    }
     const fade=2*this.overlap;
     for(let i=0;i<frames;i++) {
       const frame=startFrame+i;if(frame<this.played)continue;

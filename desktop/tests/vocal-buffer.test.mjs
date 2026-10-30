@@ -33,3 +33,20 @@ test('common activation time preserves original audio until buffering begins',()
  assert.deepEqual(result.outL.subarray(0,32),result.left.subarray(0,32));
  assert.ok(result.outL.subarray(32).every(n=>n===0));
 });
+
+test('HQ finalized spans use eight-second delay without a second crossfade and reject gaps',()=>{
+ const {buffer}=setup();buffer.enable({epoch:1,delaySeconds:8,spanMode:'final'});const initial=process(buffer,128);assert.ok(initial.outL.every(sample=>sample===0));
+ const vocals=Float32Array.from({length:48},(_,index)=>index%2?.001:.002);
+ assert.equal(buffer.receive({epoch:1,startFrame:0,pcm:vocals}),true);
+ assert.equal(buffer.receive({epoch:1,startFrame:0,pcm:vocals}),false,'Finalized spans cannot be applied twice');
+ assert.equal(buffer.receive({epoch:1,startFrame:25,pcm:new Float32Array(2)}),false,'A finalized stream cannot skip samples');
+ const result=process(buffer,24,128);
+ for(let i=0;i<24;i++)assert.ok(Math.abs(result.outL[i]-((i+1)/100-.002))<1e-6,`HQ boundary ${i} is not windowed twice`);
+ buffer.enable({epoch:2});assert.equal(buffer.delay,64,'Legacy enable restores the constructor Fast delay');
+});
+test('HQ audio remains bounded and sample-aligned through multiple ring wraps',()=>{
+ let buffer;buffer=new LiveVocalBuffer({sampleRate:16,onPcm:packet=>{assert.equal(buffer.receive({epoch:packet.epoch,startFrame:packet.sequence*16,pcm:new Float32Array(32).fill(.002)}),true);}});
+ buffer.enable({epoch:3,delaySeconds:8,spanMode:'final'});const capacity=buffer.rawL.length;
+ for(let start=0;start<640;start+=16){const output=process(buffer,16,start);for(let i=0;i<16;i++){const frame=start+i;assert.ok(Math.abs(output.outL[i]-(frame<128?0:(frame-128+1)/100-.002))<1e-5);}}
+ assert.equal(buffer.rawL.length,capacity);assert.equal(buffer.failed,false);
+});

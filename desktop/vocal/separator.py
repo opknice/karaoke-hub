@@ -10,30 +10,31 @@ WINDOW=1024*255
 OVERLAP=5512
 
 class STFT:
-    def __init__(self):
-        self.window=np.hanning(FFT+1)[:-1].astype(np.float32)
+    def __init__(self,n_fft=FFT,hop=1024,bins=BINS):
+        self.fft=n_fft;self.hop=hop;self.bins=bins
+        self.window=np.hanning(n_fft+1)[:-1].astype(np.float32)
 
     def forward(self,wave):
-        padded=np.pad(wave,((0,0),(FFT//2,FFT//2)),mode='reflect')
-        frames=np.lib.stride_tricks.sliding_window_view(padded,FFT,axis=-1)[:,::1024]
+        padded=np.pad(wave,((0,0),(self.fft//2,self.fft//2)),mode='reflect')
+        frames=np.lib.stride_tricks.sliding_window_view(padded,self.fft,axis=-1)[:,::self.hop]
         spectrum=rfft(frames*self.window,axis=-1).transpose(0,2,1)
         packed=np.stack((spectrum.real,spectrum.imag),axis=1).reshape(1,4,spectrum.shape[1],spectrum.shape[2])
-        return np.ascontiguousarray(packed[:,:,:BINS],dtype=np.float32)
+        return np.ascontiguousarray(packed[:,:,:self.bins],dtype=np.float32)
 
     def inverse(self,packed):
         count=packed.shape[-1]
-        full=np.zeros((2,2,FFT//2+1,count),dtype=np.float32)
-        full[:,:,:BINS]=packed.reshape(2,2,BINS,count)
-        waves=irfft((full[:,0]+1j*full[:,1]).transpose(0,2,1),n=FFT,axis=-1)*self.window
-        length=1024*(count-1)+FFT
+        full=np.zeros((2,2,self.fft//2+1,count),dtype=np.float32)
+        full[:,:,:self.bins]=packed.reshape(2,2,self.bins,count)
+        waves=irfft((full[:,0]+1j*full[:,1]).transpose(0,2,1),n=self.fft,axis=-1)*self.window
+        length=self.hop*(count-1)+self.fft
         result=np.zeros((2,length),dtype=np.float32)
         weight=np.zeros(length,dtype=np.float32)
         for frame in range(count):
-            start=frame*1024
-            result[:,start:start+FFT]+=waves[:,frame]
-            weight[start:start+FFT]+=self.window**2
+            start=frame*self.hop
+            result[:,start:start+self.fft]+=waves[:,frame]
+            weight[start:start+self.fft]+=self.window**2
         np.divide(result,weight[None],out=result,where=weight[None]>1e-10)
-        return result[:,FFT//2:-FFT//2]
+        return result[:,self.fft//2:-self.fft//2]
 
 class RollingSeparator:
     def __init__(self,predict,compensation=1.043,denoise=True):
