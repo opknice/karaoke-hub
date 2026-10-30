@@ -13,11 +13,12 @@ async function createEncodedVideoQueue({width,height,delayMs,onFrame,onFailure,c
     }catch{ /* Try the next explicitly supported codec. */ }
   }
   if(!configuration)throw new Error('เครื่องนี้ไม่รองรับตัวบีบอัดภาพสำหรับโหมดคุณภาพสูง');
-  const queue=[],encoding=new Map(),decoding=new Map();
+  const queue=[],encoding=new Map(),decoding=new Map(),held=[];
   let encoder,decoder,timer=null,generation=0,closed=false,failed=false,bytes=0,dropped=0,frameCount=0;
-  let decoderConfigured=false,lastTimestamp=-1,lastEncodedTimestamp=-1,ended=false,flushing=false;
+  let decoderConfigured=false,lastTimestamp=-1,lastEncodedTimestamp=-1,ended=false,flushing=false,paused=false;
   function dispose(){
     ++generation;clearTimeout(timer);timer=null;queue.length=0;encoding.clear();decoding.clear();bytes=0;
+    for(const item of held)item.frame.close();held.length=0;
     for(const codec of [encoder,decoder])if(codec&&codec.state!=='closed'){try{codec.close();}catch{}}
     encoder=null;decoder=null;decoderConfigured=false;
   }
@@ -25,7 +26,7 @@ async function createEncodedVideoQueue({width,height,delayMs,onFrame,onFailure,c
     if(closed)return;failed=true;closed=true;dispose();onFailure(String(error?.message??error).slice(0,300));
   }
   function schedule(){
-    if(closed||timer||!queue.length)return;
+    if(closed||paused||timer||!queue.length)return;
     const wait=decoding.size>=4?5:Math.max(1,queue[0].release-clock());
     timer=setTimeout(drain,wait);
   }
@@ -35,7 +36,7 @@ async function createEncodedVideoQueue({width,height,delayMs,onFrame,onFailure,c
     void decoder.flush().catch(error=>{if(epoch===generation)fail(error);}).finally(()=>{if(epoch===generation)flushing=false;});
   }
   function drain(){
-    timer=null;if(closed)return;
+    timer=null;if(closed||paused)return;
     try{
       while(queue.length&&queue[0].release<=clock()&&decoding.size<4){
         const item=queue.shift();bytes-=item.chunk.byteLength;
@@ -50,12 +51,16 @@ async function createEncodedVideoQueue({width,height,delayMs,onFrame,onFailure,c
     const epoch=++generation;
     decoder=new VideoDecoder({
       output(frame){
+        let retained=false;
         try{
           if(closed||epoch!==generation)return;
           const item=decoding.get(frame.timestamp);decoding.delete(frame.timestamp);
-          if(item)onFrame({frame,captured:item.captured,time:item.time});
+          if(item&&paused){
+            if(held.length>=4)throw new Error('Paused decoded frame limit exceeded');
+            held.push({frame,item});retained=true;
+          }else if(item)onFrame({frame,captured:item.captured,time:item.time});
           schedule();
-        }catch(error){fail(error);}finally{frame.close();}
+        }catch(error){fail(error);}finally{if(!retained)frame.close();}
       },
       error(error){if(epoch===generation)fail(error);},
     });
@@ -79,7 +84,7 @@ async function createEncodedVideoQueue({width,height,delayMs,onFrame,onFailure,c
   return {
     push(frame,{captured,time}){
       try{
-        if(closed||ended)return false;
+        if(closed||ended||paused)return false;
         if(!Number.isFinite(captured)||!Number.isFinite(time)||time<0||!Number.isSafeInteger(frame.timestamp)||frame.timestamp<0)throw new Error('Invalid captured video clock');
         if(frame.timestamp<=lastTimestamp){dropped++;return false;}
         initialize();
@@ -88,13 +93,19 @@ async function createEncodedVideoQueue({width,height,delayMs,onFrame,onFailure,c
         encoder.encode(frame,{keyFrame:frameCount++%30===0});return true;
       }catch(error){fail(error);return false;}finally{frame.close();}
     },
-    clear(){if(closed)return;dispose();lastTimestamp=-1;lastEncodedTimestamp=-1;frameCount=0;ended=false;flushing=false;},
+    clear(){if(closed)return;dispose();lastTimestamp=-1;lastEncodedTimestamp=-1;frameCount=0;ended=false;flushing=false;paused=false;},
+    pause(){if(closed||paused)return;paused=true;clearTimeout(timer);timer=null;},
+    resume(){
+      if(closed||!paused)return;paused=false;
+      while(held.length&&!closed){const {frame,item}=held.shift();try{onFrame({frame,captured:item.captured,time:item.time});}catch(error){fail(error);}finally{frame.close();}}
+      schedule();flushTail();
+    },
     finish(){
       if(closed||ended)return;ended=true;const epoch=generation;
       if(encoder)void encoder.flush().then(()=>{if(epoch===generation){schedule();flushTail();}}).catch(error=>{if(epoch===generation)fail(error);});
     },
     close(){if(closed)return;closed=true;dispose();},
-    snapshot(){return{active:!closed,failed,codec:configuration.codec,width,height,bufferedFrames:queue.length,encodedBytes:bytes,
+    snapshot(){return{active:!closed,failed,paused,heldDecoded:held.length,codec:configuration.codec,width,height,bufferedFrames:queue.length,encodedBytes:bytes,
       pendingEncodes:encoding.size,pendingDecodes:decoding.size,encoderQueue:encoder?.encodeQueueSize??0,decoderQueue:decoder?.decodeQueueSize??0,droppedFrames:dropped};},
   };
 }

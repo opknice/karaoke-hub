@@ -1,7 +1,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const load=()=>require('../lib/vocal-video-codec.cjs').createEncodedVideoQueue;
 function frame(timestamp){return{timestamp,closed:0,close(){this.closed++;}};}
-function fakeCodecs(context,{hold=false,supported=true}={}){
+function fakeCodecs(context,{hold=false,holdDecode=false,supported=true}={}){
  const oldEncoder=globalThis.VideoEncoder,oldDecoder=globalThis.VideoDecoder,encoders=[],decoders=[];
  class Encoder{
   static async isConfigSupported(config){return{supported,config};}
@@ -14,7 +14,7 @@ function fakeCodecs(context,{hold=false,supported=true}={}){
   static async isConfigSupported(config){return{supported,config};}
   constructor(callbacks){this.callbacks=callbacks;this.state='unconfigured';this.decodeQueueSize=0;decoders.push(this);}
   configure(){this.state='configured';}close(){this.state='closed';}async flush(){}
-  decode(chunk){this.callbacks.output(frame(chunk.timestamp));}
+  decode(chunk){if(!holdDecode)this.callbacks.output(frame(chunk.timestamp));}
  }
  globalThis.VideoEncoder=Encoder;globalThis.VideoDecoder=Decoder;
  context.after(()=>{globalThis.VideoEncoder=oldEncoder;globalThis.VideoDecoder=oldDecoder;});return{encoders,decoders};
@@ -48,4 +48,20 @@ test('unsupported codecs reject HQ setup',async context=>{
 test('decoder failure reports once and releases its queues',async context=>{
  const {decoders}=fakeCodecs(context);const failures=[];const queue=await load()({width:1280,height:720,delayMs:8000,onFrame(){},onFailure:error=>failures.push(error)});
  decoders[0].callbacks.error(new Error('decode failed'));decoders[0].callbacks.error(new Error('second error'));assert.equal(failures.length,1);assert.equal(queue.snapshot().failed,true);queue.close();
+});
+test('pause retains in-flight decoded frames without presenting and resume closes them once',async context=>{
+ context.mock.timers.enable({apis:['setTimeout']});const {decoders}=fakeCodecs(context,{holdDecode:true});let now=0;const drawn=[];
+ const queue=await load()({width:1280,height:720,delayMs:8000,clock:()=>now,onFrame:item=>drawn.push(item),onFailure:assert.fail});
+ try{queue.push(frame(0),{captured:0,time:12});now=8000;context.mock.timers.tick(8000);queue.pause();
+  const output=frame(0);decoders[0].callbacks.output(output);assert.equal(drawn.length,0);assert.equal(output.closed,0);assert.equal(queue.snapshot().heldDecoded,1);
+  context.mock.timers.tick(10000);assert.equal(drawn.length,0);queue.resume();assert.equal(drawn.length,1);assert.equal(output.closed,1);assert.equal(queue.snapshot().heldDecoded,0);
+  queue.push(frame(9000000),{captured:9000,time:21});now=17000;context.mock.timers.tick(9000);queue.pause();const held=frame(9000000);decoders[0].callbacks.output(held);queue.clear();assert.equal(held.closed,1);assert.equal(queue.snapshot().heldDecoded,0);
+ }finally{queue.close();}
+});
+test('pause retains late encoder output and does not reset codec generation or grow pending jobs',async context=>{
+ context.mock.timers.enable({apis:['setTimeout']});const {encoders}=fakeCodecs(context,{hold:true});let now=0;const drawn=[];
+ const queue=await load()({width:1280,height:720,delayMs:8000,clock:()=>now,onFrame:item=>drawn.push(item),onFailure:assert.fail});
+ try{queue.push(frame(0),{captured:0,time:0});queue.pause();encoders[0].deliver(0);now=8000;context.mock.timers.tick(8000);assert.equal(drawn.length,0);assert.equal(queue.snapshot().bufferedFrames,1);assert.equal(encoders.length,1);
+  queue.resume();context.mock.timers.tick(1);assert.equal(drawn.length,1);assert.equal(encoders.length,1);
+ }finally{queue.close();}
 });

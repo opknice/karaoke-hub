@@ -6,6 +6,8 @@ const {createEncodedVideoQueue}=require('./vocal-video-codec.cjs');
 async function installVideoDelay(configuration,encodedFactory) {
   const validEpoch=value=>Number.isSafeInteger(value)&&value>0&&value<2**31;
   const useEncoded=configuration.videoBufferMode==='encoded';
+  const continuous=configuration.continuous===true;
+  if(continuous&&(!useEncoded||configuration.delayMs!==8000))throw new Error('Invalid continuous video profile');
   if(!validEpoch(configuration.epoch)||typeof configuration.token!=='string'||configuration.token.length<8||configuration.token.length>128
     ||!Number.isFinite(configuration.startWallMs)||!Number.isFinite(configuration.delayMs)||configuration.delayMs<1000||configuration.delayMs>(useEncoded?8500:4800)
     ||new URL(configuration.parentOrigin).origin!==configuration.parentOrigin)throw new Error('Invalid video delay configuration');
@@ -18,10 +20,14 @@ async function installVideoDelay(configuration,encodedFactory) {
   source.parentElement.appendChild(canvas);
   const context=canvas.getContext('2d',{alpha:false,desynchronized:true});
   const resized=new OffscreenCanvas(1,1),resizeContext=resized.getContext('2d',{alpha:false});
-  const clock=()=>performance.timeOrigin+performance.now();
+  const wallClock=()=>performance.timeOrigin+performance.now();
+  let pauseWall=null,pauseOffset=0;
+  const clock=()=>((pauseWall??wallClock())-pauseOffset);
   const state={active:true,paused:false,epoch:configuration.epoch,startWallMs:configuration.startWallMs,queue:[],timer:null,callback:null,
     displayTime:source.currentTime,lastLatencyMs:0,lastDisplayedCapture:0,lastCapture:0,frozen:false,bytes:0,ignoreSeek:false,failed:false};
   let encoded=null,encodedWidth=0,encodedHeight=0;
+  const holdClock=()=>{if(continuous&&pauseWall===null){pauseWall=wallClock();encoded?.pause();}};
+  const resumeClock=()=>{if(continuous&&pauseWall!==null){pauseOffset+=wallClock()-pauseWall;pauseWall=null;encoded?.resume();}};
   const emit=(kind,extra={})=>window.top.postMessage({source:'karaoke-hub-live-video',token:configuration.token,epoch:state.epoch,kind,time:source.currentTime,paused:source.paused,...extra},configuration.parentOrigin);
   const clearFrames=()=>{clearTimeout(state.timer);state.timer=null;for(const item of state.queue)item.frame.close();state.queue.length=0;state.bytes=0;encoded?.clear();};
   const alignCanvas=()=>{
@@ -76,13 +82,13 @@ async function installVideoDelay(configuration,encodedFactory) {
   }
   const onPause=()=>{
     if(source.ended){encoded?.finish?.();emit('ended');return;}
-    state.paused=true;clearFrames();emit('pause');
+    state.paused=true;if(continuous)holdClock();else clearFrames();emit('pause');
   };
-  const onPlay=()=>emit('play');
-  const onSeeking=()=>{if(!state.ignoreSeek){state.paused=true;clearFrames();emit('seeking');}};
+  const onPlay=()=>{if(continuous){state.paused=false;resumeClock();}emit('play');};
+  const onSeeking=()=>{if(!state.ignoreSeek){state.paused=true;clearFrames();holdClock();emit('seeking');}};
   const onSeeked=()=>{if(state.ignoreSeek){state.ignoreSeek=false;return;}emit('seeked');};
   function snapshot(){return{active:state.active,epoch:state.epoch,paused:state.paused,bufferedFrames:encoded?.snapshot().bufferedFrames??state.queue.length,
-    displayTime:state.displayTime,sourceTime:source.currentTime,sourceEnded:source.ended,failed:state.failed,
+    displayTime:state.displayTime,sourceTime:source.currentTime,sourceEnded:source.ended,sourcePaused:source.paused,failed:state.failed,
     lastLatencyMs:state.lastDisplayedCapture?clock()-state.lastDisplayedCapture:state.lastLatencyMs,videoWidth:canvas.width,videoHeight:canvas.height,
     videoBufferMode:useEncoded?'encoded':'raw',codecBuffer:encoded?.snapshot()??null};}
   async function rewind(){
@@ -97,10 +103,14 @@ async function installVideoDelay(configuration,encodedFactory) {
   const api={snapshot,
     reset(next){
       if(!validEpoch(next.epoch)||!Number.isFinite(next.startWallMs))throw new Error('Invalid video reset');
+      pauseWall=null;pauseOffset=0;
       clearFrames();state.epoch=next.epoch;state.startWallMs=next.startWallMs;state.paused=Boolean(next.paused);state.frozen=false;state.failed=false;state.lastLatencyMs=0;state.lastDisplayedCapture=0;state.lastCapture=0;
+      if(state.paused)holdClock();
       return snapshot();
     },
-    async pauseAndRewind(){state.paused=true;clearFrames();await rewind();return snapshot();},
+    pause(){state.paused=true;holdClock();return snapshot();},
+    resume(){if(!source.paused||source.ended){state.paused=false;resumeClock();}return snapshot();},
+    async pauseAndRewind(){state.paused=true;if(continuous)holdClock();else{clearFrames();await rewind();}return snapshot();},
     async prepareResume({atTime}={}){
       state.paused=true;clearFrames();
       if(Number.isFinite(atTime))state.displayTime=Math.max(0,Math.min(source.duration,atTime));
@@ -165,6 +175,8 @@ class VocalVideo {
   async snapshot(){return this.frame?.executeJavaScript('window.__karaokeVocalVideo?.snapshot()??null');}
   async reset(configuration){const operation=++this.operation;await this.verifyContext(this.context);if(operation!==this.operation)throw new Error('ยกเลิกการซิงก์ภาพแล้ว');const frame=this.frame;this.epoch=configuration.epoch;return frame.executeJavaScript(`window.__karaokeVocalVideo.reset(${JSON.stringify(configuration)})`);}
   async pauseAndRewind(){await this.verifyContext(this.context);return this.frame.executeJavaScript('window.__karaokeVocalVideo.pauseAndRewind()');}
+  async pause(){await this.verifyContext(this.context);return this.frame.executeJavaScript('window.__karaokeVocalVideo.pause()');}
+  async resume(){await this.verifyContext(this.context);return this.frame.executeJavaScript('window.__karaokeVocalVideo.resume()');}
   async prepareResume(configuration){await this.verifyContext(this.context);return this.frame.executeJavaScript(`window.__karaokeVocalVideo.prepareResume(${JSON.stringify(configuration)})`);}
   async stop({restorePosition=false,expectedEpoch}={}){
     if(expectedEpoch!==undefined&&this.epoch!==expectedEpoch)return;
