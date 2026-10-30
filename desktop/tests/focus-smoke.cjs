@@ -63,7 +63,7 @@ async function wait(read,check,label,timeout=45000){const until=Date.now()+timeo
   await remote.evaluate(()=>{document.querySelector('[role="combobox"]').blur();document.body.tabIndex=-1;document.body.focus();});
   await shell.locator('#audio').click();
   await wait(()=>input.evaluate(el=>document.hasFocus()&&document.activeElement===el),Boolean,'Search focus while audio is still connecting',500);
-  assert.match(await shell.locator('#audio').innerText(),/กำลังเชื่อมต่อ/);
+  assert.match(await shell.locator('#audio').innerText(),/กำลังเชื่อมต่อ|ยกเลิกเตรียมเสียง/);
   await typeIntoFocusedView('ระหว่างรอ');
   await wait(()=>input.inputValue(),v=>v==='ระหว่างรอ','Typing works before slow audio action completes',500);
   await wait(()=>shell.evaluate(()=>window.desktopPlayer.command('REQUEST_STATUS')).then(r=>r.state.captureStatus),v=>v!=='starting','Audio command settled');

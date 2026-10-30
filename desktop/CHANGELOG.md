@@ -8,6 +8,8 @@ Native preflight arms capture before source playback; bounded request cancellati
 
 Both exact model weights/recipes, MV-only eligibility, local processing, key/one-percent Tempo and Thai keyboard focus are retained. Browser-only and older native clients retain their existing playback path. Initial model loading is separate from the eight-second startup buffer.
 
+Packaged production acceptance on Windows 11 / GTX 1650 Ti measured prepared Fast/HQ activation at 14/21ms and shared video delay around 8.03–8.05 seconds. A five-minute HQ session passed with original/AI toggles and bounded encoded storage; separate actual-control checks passed paused model changes, retained resume, paused seek, delayed tail completion and Thai keyboard focus. See [0.1.7 acceptance](ACCEPTANCE-0.1.7.md) for evidence and hardware/listening limits.
+
 ## 0.1.6 — 2026-10-30
 
 Added an optional **คุณภาพสูง · HQ5** model alongside **เร็ว (เดิม)**, which remains the default for new installations. The selected model is saved locally. HQ5 uses Instrumental HQ5 with sign-denoise and normalized overlap-add, an eight-second audio buffer and bounded compressed 720p/30 video. Fast retains the original model and 4.5-second buffer.

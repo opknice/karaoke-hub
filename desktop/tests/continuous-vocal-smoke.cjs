@@ -47,6 +47,22 @@ async function wait(read,check,label,timeout=30000){const end=Date.now()+timeout
    const current=await checkTimeline();assert.equal(current.vocalModelId,other);assert.ok(current.vocalDisplayTime>=before+7,'Original music advances throughout new model preparation');
    await sleep(1000);await toggleOff();console.log('PASS original kept playing while a different model prepared; same session, no seek');
   }
+  let control;
+  if(process.argv.includes('--paused-switch')||process.argv.includes('--extended')){
+   const controlUrl=new URL('/queue',url).href;
+   await app.evaluate(async({BrowserWindow},controlUrl)=>{const control=new BrowserWindow({show:false,webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,backgroundThrottling:false,partition:'persist:karaoke-player'}});await control.loadURL(controlUrl);},controlUrl);
+   control=await wait(async()=>app.context().pages().find(p=>p.url()===controlUrl),Boolean,'Shared playback controls');await control.getByRole('button',{name:'Pause',exact:true}).waitFor();
+  }
+  if(process.argv.includes('--paused-switch')){
+   await control.getByRole('button',{name:'Pause',exact:true}).click();await wait(state,s=>s.vocalBufferStatus==='paused','Pause before model change');
+   const paused=await media('window.__karaokeVocalVideo.snapshot().displayTime'),other=profile==='fast'?'hq5':'fast';
+   await shell.locator('#vocal-model').selectOption(other);await wait(state,s=>s.vocalModelId===other&&s.vocalRemoverReady,'New model prepared while paused',45000);
+   await checkTimeline();assert.equal(await media('window.__karaokeVocalVideo.snapshot().displayTime'),paused,'Model preparation must retain paused position');
+   await shell.locator('#vocal-remover').click();await sleep(300);assert.equal(await media('window.__karaokeVocalVideo.snapshot().displayTime'),paused,'Pending removal must not resume playback');
+   await control.getByRole('button',{name:'Resume',exact:true}).click();await wait(state,s=>s.vocalDisplayTime>paused+.1,'Retained resume after model change',2500);
+   const on=await wait(state,s=>s.vocalRemoverStatus==='on'||s.vocalRemoverStatus==='error','Paused model choice becomes audible',20000);assert.equal(on.vocalRemoverStatus,'on',JSON.stringify(on));await checkTimeline();await toggleOff();
+   console.log('PASS model change while paused retains position; immediate original resume then automatic AI without seek');
+  }
   if(recording){console.log('Transition recording',await recording);recording=null;}
   await shell.locator('#version-karaoke').click();await checkTimeline();assert.equal(await remote.getByRole('combobox').evaluate(el=>document.activeElement===el&&document.hasFocus()),true,'Search mode returns native typing focus without changing MV');
   if(process.argv.includes('--switch')){
@@ -62,12 +78,9 @@ async function wait(read,check,label,timeout=30000){const end=Date.now()+timeout
    console.log('PASS continuous original/background AI',{seconds,samples,maxBytes,maxPackets});
   }
   if(process.argv.includes('--extended')){
-   const controlUrl=new URL('/queue',url).href;
-   await app.evaluate(async({BrowserWindow},controlUrl)=>{const control=new BrowserWindow({show:false,webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,backgroundThrottling:false,partition:'persist:karaoke-player'}});await control.loadURL(controlUrl);},controlUrl);
-   const control=await wait(async()=>app.context().pages().find(p=>p.url()===controlUrl),Boolean,'Shared playback controls');await control.getByRole('button',{name:'Pause',exact:true}).waitFor();
-   await media(`(document.querySelector('video.html5-main-video')||document.querySelector('video')).pause()`);await wait(state,s=>s.vocalBufferStatus==='paused','Retained pause');const paused=await media('window.__karaokeVocalVideo.snapshot().displayTime');await sleep(500);assert.equal(await media('window.__karaokeVocalVideo.snapshot().displayTime'),paused);
-   await media(`(document.querySelector('video.html5-main-video')||document.querySelector('video')).play()`);await wait(state,s=>s.vocalDisplayTime>paused+.1,'Immediate retained resume',2500);
-   await media(`(document.querySelector('video.html5-main-video')||document.querySelector('video')).pause()`);await wait(state,s=>s.vocalBufferStatus==='paused','Pause before seek');await media(`(document.querySelector('video.html5-main-video')||document.querySelector('video')).currentTime=60`);await wait(state,s=>s.vocalSessionEpoch>sessionEpoch,'Paused seek new generation');await media(`(document.querySelector('video.html5-main-video')||document.querySelector('video')).play()`);await wait(state,s=>s.vocalVideoReady&&s.vocalDisplayTime>=60,'Seek resume primed',20000);
+   await control.getByRole('button',{name:'Pause',exact:true}).click();await wait(state,s=>s.vocalBufferStatus==='paused','Retained pause');const paused=await media('window.__karaokeVocalVideo.snapshot().displayTime');await sleep(500);assert.equal(await media('window.__karaokeVocalVideo.snapshot().displayTime'),paused);
+   await control.getByRole('button',{name:'Resume',exact:true}).click();await wait(state,s=>s.vocalDisplayTime>paused+.1,'Immediate retained resume',2500);
+   await control.getByRole('button',{name:'Pause',exact:true}).click();await wait(state,s=>s.vocalBufferStatus==='paused','Pause before seek');await media(`(document.querySelector('video.html5-main-video')||document.querySelector('video')).currentTime=60`);await wait(state,s=>s.vocalSessionEpoch>sessionEpoch,'Paused seek new generation');await control.getByRole('button',{name:'Resume',exact:true}).click();await wait(state,s=>s.vocalVideoReady&&s.vocalDisplayTime>=60,'Seek resume primed',20000);
    await media(`(()=>{const v=document.querySelector('video.html5-main-video')||document.querySelector('video');v.currentTime=v.duration-2;})()`);await wait(()=>media(`(document.querySelector('video.html5-main-video')||document.querySelector('video')).ended`),Boolean,'Source ended',6000);
    await sleep(1000);assert.equal((await state()).currentQueueItemId,initial.currentQueueItemId,'Delayed original tail must not be cut');
    await control.getByRole('button',{name:'Pause',exact:true}).click();

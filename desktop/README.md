@@ -62,7 +62,7 @@ The trusted Player is a sandboxed, context-isolated WebContentsView with Node di
 
 The hosted website is not deployed by building this desktop app, and its existing APIs/queue schema remain in place. Shipping a new installer is separate from deploying the website.
 
-Prior release measurements: [0.1.6 acceptance](ACCEPTANCE-0.1.6.md). Version0.1.7 measurements will be recorded in its acceptance report.
+Release measurements: [0.1.7 acceptance](ACCEPTANCE-0.1.7.md). Previous measurements remain in [0.1.6 acceptance](ACCEPTANCE-0.1.6.md).
 
 ## Acceptance limits
 
