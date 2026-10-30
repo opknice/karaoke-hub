@@ -1,11 +1,13 @@
 const {isPlayerUrl}=require('./policy.cjs');
 const {isYouTubeFrame}=require('./media-tempo.cjs');
+const {createEncodedVideoQueue}=require('./vocal-video-codec.cjs');
 
 // Serialized into the trusted media frame. It has no Node or filesystem access.
-function installVideoDelay(configuration) {
+async function installVideoDelay(configuration,encodedFactory) {
   const validEpoch=value=>Number.isSafeInteger(value)&&value>0&&value<2**31;
+  const useEncoded=configuration.videoBufferMode==='encoded';
   if(!validEpoch(configuration.epoch)||typeof configuration.token!=='string'||configuration.token.length<8||configuration.token.length>128
-    ||!Number.isFinite(configuration.startWallMs)||!Number.isFinite(configuration.delayMs)||configuration.delayMs<1000||configuration.delayMs>4800
+    ||!Number.isFinite(configuration.startWallMs)||!Number.isFinite(configuration.delayMs)||configuration.delayMs<1000||configuration.delayMs>(useEncoded?8500:4800)
     ||new URL(configuration.parentOrigin).origin!==configuration.parentOrigin)throw new Error('Invalid video delay configuration');
   window.__karaokeVocalVideo?.stop({restorePosition:false}).catch(()=>{});
   const source=document.querySelector('video.html5-main-video')||document.querySelector('video');
@@ -19,8 +21,9 @@ function installVideoDelay(configuration) {
   const clock=()=>performance.timeOrigin+performance.now();
   const state={active:true,paused:false,epoch:configuration.epoch,startWallMs:configuration.startWallMs,queue:[],timer:null,callback:null,
     displayTime:source.currentTime,lastLatencyMs:0,lastDisplayedCapture:0,lastCapture:0,frozen:false,bytes:0,ignoreSeek:false,failed:false};
+  let encoded=null,encodedWidth=0,encodedHeight=0;
   const emit=(kind,extra={})=>window.top.postMessage({source:'karaoke-hub-live-video',token:configuration.token,epoch:state.epoch,kind,time:source.currentTime,paused:source.paused,...extra},configuration.parentOrigin);
-  const clearFrames=()=>{clearTimeout(state.timer);state.timer=null;for(const item of state.queue)item.frame.close();state.queue.length=0;state.bytes=0;};
+  const clearFrames=()=>{clearTimeout(state.timer);state.timer=null;for(const item of state.queue)item.frame.close();state.queue.length=0;state.bytes=0;encoded?.clear();};
   const alignCanvas=()=>{
     canvas.style.left=`${source.offsetLeft}px`;canvas.style.top=`${source.offsetTop}px`;
     canvas.style.width=`${source.clientWidth}px`;canvas.style.height=`${source.clientHeight}px`;
@@ -47,13 +50,21 @@ function installVideoDelay(configuration) {
     try{
       if(!state.paused&&!state.failed&&now>=state.startWallMs&&now-state.lastCapture>=1000/30-.5){
         let image=source;
-        if(source.videoWidth>1280||source.videoHeight>720){
+        if(encoded){
+          if(resized.width!==encodedWidth||resized.height!==encodedHeight){resized.width=encodedWidth;resized.height=encodedHeight;}
+          resizeContext.drawImage(source,0,0,encodedWidth,encodedHeight);image=resized;
+        }else if(source.videoWidth>1280||source.videoHeight>720){
           const scale=Math.min(1280/source.videoWidth,720/source.videoHeight);
           const width=Math.max(2,Math.round(source.videoWidth*scale)),height=Math.max(2,Math.round(source.videoHeight*scale));
           if(resized.width!==width||resized.height!==height){resized.width=width;resized.height=height;}
           resizeContext.drawImage(source,0,0,width,height);image=resized;
         }
         const frame=new VideoFrame(image,{timestamp:Math.round(now*1000)});
+        if(encoded){
+          if(!state.frozen){draw({frame,time:metadata.mediaTime});state.frozen=true;}
+          encoded.push(frame,{captured:now,time:metadata.mediaTime});state.lastCapture=now;
+          state.callback=source.requestVideoFrameCallback(capture);return;
+        }
         const bytes=frame.displayWidth*frame.displayHeight*4;
         if(state.queue.length>=139||state.bytes+bytes>512*1024*1024){frame.close();throw new Error('บัฟเฟอร์ภาพเต็ม จึงหยุด Vocal Remover');}
         const item={frame,captured:now,release:now+configuration.delayMs,time:metadata.mediaTime,bytes};
@@ -64,17 +75,16 @@ function installVideoDelay(configuration) {
     state.callback=source.requestVideoFrameCallback(capture);
   }
   const onPause=()=>{
-    if(source.ended){emit('ended');return;}
+    if(source.ended){encoded?.finish?.();emit('ended');return;}
     state.paused=true;clearFrames();emit('pause');
   };
   const onPlay=()=>emit('play');
   const onSeeking=()=>{if(!state.ignoreSeek){state.paused=true;clearFrames();emit('seeking');}};
   const onSeeked=()=>{if(state.ignoreSeek){state.ignoreSeek=false;return;}emit('seeked');};
-  source.addEventListener('pause',onPause);source.addEventListener('play',onPlay);
-  source.addEventListener('seeking',onSeeking);source.addEventListener('seeked',onSeeked);
-  function snapshot(){return{active:state.active,epoch:state.epoch,paused:state.paused,bufferedFrames:state.queue.length,
+  function snapshot(){return{active:state.active,epoch:state.epoch,paused:state.paused,bufferedFrames:encoded?.snapshot().bufferedFrames??state.queue.length,
     displayTime:state.displayTime,sourceTime:source.currentTime,sourceEnded:source.ended,failed:state.failed,
-    lastLatencyMs:state.lastDisplayedCapture?clock()-state.lastDisplayedCapture:state.lastLatencyMs,videoWidth:canvas.width,videoHeight:canvas.height};}
+    lastLatencyMs:state.lastDisplayedCapture?clock()-state.lastDisplayedCapture:state.lastLatencyMs,videoWidth:canvas.width,videoHeight:canvas.height,
+    videoBufferMode:useEncoded?'encoded':'raw',codecBuffer:encoded?.snapshot()??null};}
   async function rewind(){
     if(!Number.isFinite(state.displayTime)||Math.abs(source.currentTime-state.displayTime)<.02)return;
     state.ignoreSeek=true;
@@ -98,7 +108,7 @@ function installVideoDelay(configuration) {
     },
     async stop({restorePosition=false}={}){
       const wasEnded=source.ended;
-      state.active=false;clearFrames();source.cancelVideoFrameCallback(state.callback);
+      state.active=false;clearFrames();encoded?.close();if(state.callback!==null)source.cancelVideoFrameCallback(state.callback);
       source.removeEventListener('pause',onPause);source.removeEventListener('play',onPlay);
       source.removeEventListener('seeking',onSeeking);source.removeEventListener('seeked',onSeeked);
       if(restorePosition){await rewind();if(wasEnded)await source.play().catch(()=>{});}canvas.remove();
@@ -106,7 +116,24 @@ function installVideoDelay(configuration) {
       return snapshot();
     },
   };
-  window.__karaokeVocalVideo=api;state.callback=source.requestVideoFrameCallback(capture);
+  // Install cancellation before asynchronous codec capability checks can yield.
+  window.__karaokeVocalVideo=api;
+  if(useEncoded){
+    try{
+      if(typeof encodedFactory!=='function')throw new Error('ไม่พบระบบบัฟเฟอร์ภาพโหมดคุณภาพสูง');
+      const scale=Math.min(1,1280/source.videoWidth,720/source.videoHeight);
+      encodedWidth=Math.max(2,Math.floor(source.videoWidth*scale/2)*2);encodedHeight=Math.max(2,Math.floor(source.videoHeight*scale/2)*2);
+      encoded=await encodedFactory({width:encodedWidth,height:encodedHeight,delayMs:configuration.delayMs,clock,
+        onFrame:item=>{if(!state.active||state.paused||state.failed)return;draw(item);state.lastDisplayedCapture=item.captured;state.lastLatencyMs=clock()-item.captured;},
+        onFailure:message=>{if(!state.active)return;state.failed=true;clearFrames();emit('error',{error:message});},
+      });
+      if(!state.active){encoded.close();return snapshot();}
+      if(source.paused||source.ended)throw new Error('เพลง MV หยุดระหว่างเตรียมภาพ กรุณาเปิด Vocal Remover อีกครั้ง');
+    }catch(error){await api.stop({restorePosition:false});throw error;}
+  }
+  source.addEventListener('pause',onPause);source.addEventListener('play',onPlay);
+  source.addEventListener('seeking',onSeeking);source.addEventListener('seeked',onSeeked);
+  state.callback=source.requestVideoFrameCallback(capture);
   return snapshot();
 }
 
@@ -129,7 +156,8 @@ class VocalVideo {
       const available=await frame.executeJavaScript('Boolean(document.querySelector("video"))');if(!available)continue;
       if(operation!==this.operation)throw new Error('ยกเลิกการเริ่มภาพ Vocal Remover แล้ว');
       this.frame=frame;this.epoch=configuration.epoch;this.context=context;
-      const result=await frame.executeJavaScript(`(${installVideoDelay.toString()})(${JSON.stringify(configuration)})`);
+      const result=await frame.executeJavaScript(`(${installVideoDelay.toString()})(${JSON.stringify(configuration)},${createEncodedVideoQueue.toString()})`);
+      if(operation!==this.operation)throw new Error('ยกเลิกการเริ่มภาพ Vocal Remover แล้ว');
       return result;
     }
     throw new Error('ยังไม่พบวิดีโอ MV ที่กำลังเล่น');

@@ -1,8 +1,10 @@
 const {_electron:electron}=require('playwright');
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),http=require('node:http'),assert=require('node:assert/strict');
 const {installVideoDelay}=require('../lib/vocal-video.cjs');
+const {createEncodedVideoQueue}=require('../lib/vocal-video-codec.cjs');
+const hq=process.argv.includes('--hq'),delay=hq?8000:4500;
 async function wait(read,check,label,timeout=10000){let last;const until=Date.now()+timeout;while(Date.now()<until){last=await read();if(check(last))return last;await new Promise(r=>setTimeout(r,50));}throw new Error(`${label}: ${JSON.stringify(last)}`);}
-const bytes=fs.readFileSync(path.resolve(__dirname,'../../build/verification/vocal-video-fixture.mp4'));
+const bytes=fs.readFileSync(path.resolve(__dirname,hq?'../../build/verification/vocal-video-720-fixture.mp4':'../../build/verification/vocal-video-fixture.mp4'));
 const server=http.createServer((request,response)=>{
  if(request.url==='/clip.mp4'){
   const range=/^bytes=(\d+)-(\d*)$/.exec(request.headers.range??'');
@@ -19,21 +21,30 @@ const server=http.createServer((request,response)=>{
   app=await electron.launch({executablePath:require('electron'),args:[path.resolve(__dirname,'..')],env});
   const remote=await wait(async()=>app.context().pages().find(p=>p.url().startsWith(url)),Boolean,'Player');
   await wait(()=>remote.evaluate(()=>document.querySelector('video')?.readyState),value=>value>=2,'Fixture decoded');
-  await remote.evaluate(({source,config})=>(0,eval)(`(${source})`)(config),{source:installVideoDelay.toString(),config:{epoch:1,token:'test-video-token',parentOrigin:new URL(url).origin,startWallMs:Date.now()+100,delayMs:4500}});
+  await remote.evaluate(({source,factory,config})=>(0,eval)(`(${source})`)(config,(0,eval)(`(${factory})`)),{source:installVideoDelay.toString(),factory:createEncodedVideoQueue.toString(),config:{epoch:1,token:'test-video-token',parentOrigin:new URL(url).origin,startWallMs:Date.now()+100,delayMs:delay,videoBufferMode:hq?'encoded':'raw'}});
   const state=()=>remote.evaluate(()=>window.__karaokeVocalVideo.snapshot());
   await wait(state,s=>s.bufferedFrames>0,'Video buffered');
-  const delayed=await wait(state,s=>s.lastLatencyMs>=4400,'Delayed frame rendered',7000);
-  assert.ok(delayed.lastLatencyMs<4900,JSON.stringify(delayed));assert.ok(delayed.bufferedFrames<=139);
-  assert.ok(Math.abs(delayed.sourceTime-delayed.displayTime-4.5)<.35,JSON.stringify(delayed));
+  const delayed=await wait(state,s=>s.lastLatencyMs>=delay-100,'Delayed frame rendered',delay+3000);
+  assert.ok(delayed.lastLatencyMs<delay+400,JSON.stringify(delayed));assert.ok(delayed.bufferedFrames<=(hq?512:139));
+  assert.ok(Math.abs(delayed.sourceTime-delayed.displayTime-delay/1000)<.35,JSON.stringify(delayed));
   await remote.evaluate(()=>document.querySelector('video').pause());
   await wait(state,s=>s.paused,'Pause recognized');
   const paused=await remote.evaluate(()=>window.__karaokeVocalVideo.pauseAndRewind());
   assert.ok(Math.abs(paused.sourceTime-paused.displayTime)<.15,`Pause keeps the visible playback position: ${JSON.stringify(paused)}`);
   await remote.evaluate(async()=>{await document.querySelector('video').play();await window.__karaokeVocalVideo.prepareResume({});window.__karaokeVocalVideo.reset({epoch:2,startWallMs:Date.now()+100,resume:true});});
-  const resumed=await wait(state,s=>s.epoch===2&&s.lastLatencyMs>=4400,'Resumed video synced',7000);
+  const resumed=await wait(state,s=>s.epoch===2&&s.lastLatencyMs>=delay-100,'Resumed video synced',delay+3000);
   assert.ok(Math.abs(resumed.displayTime-paused.displayTime)<.25,JSON.stringify(resumed));
+  if(hq){
+    await remote.evaluate(()=>{const video=document.querySelector('video');video.currentTime=video.duration-1;});
+    await wait(()=>remote.evaluate(()=>!document.querySelector('video').seeking),Boolean,'End seek decoded');
+    await remote.evaluate(()=>window.__karaokeVocalVideo.reset({epoch:3,startWallMs:Date.now()+100}));
+    await wait(()=>remote.evaluate(()=>document.querySelector('video').ended),Boolean,'Fixture source ended',3000);
+    const tail=await wait(state,s=>s.sourceEnded&&s.displayTime>s.sourceTime-.15&&s.lastLatencyMs>=delay-100,'Final delayed video frame drained',delay+3000);
+    assert.equal(tail.failed,false);assert.equal(tail.codecBuffer.pendingEncodes,0);assert.equal(tail.codecBuffer.pendingDecodes,0);
+  }
   const result=await remote.evaluate(()=>window.__karaokeVocalVideo.stop({restorePosition:true}));
   assert.equal(result.bufferedFrames,0);assert.equal(await remote.locator('[data-karaoke-vocal-video]').count(),0);
-  console.log('PASS raw video delay below 5 seconds, bounded frames, pause position and cleanup');
+  if(hq){assert.equal(delayed.videoBufferMode,'encoded');assert.equal(delayed.videoWidth,1280);assert.equal(delayed.videoHeight,720);assert.ok(delayed.codecBuffer.encodedBytes<64*1024*1024);console.log('HQ codec measurement',JSON.stringify({firstFrameDelayMs:delayed.lastLatencyMs,...delayed.codecBuffer}));}
+  console.log(hq?'PASS HQ encoded 720p video: eight-second delay, bounded queues, pause/resume, end-tail drain and cleanup':'PASS raw video delay below 5 seconds, bounded frames, pause position and cleanup');
  }finally{if(app)await app.close();await new Promise(resolve=>server.close(resolve));}
 })().catch(error=>{console.error(error);process.exitCode=1;});
