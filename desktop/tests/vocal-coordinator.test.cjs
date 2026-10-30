@@ -62,3 +62,12 @@ test('priming that misses its deadline returns to original audio with an explici
   assert.ok(s.audio.some(call=>call.type==='STOP_VOCAL'));
  }finally{await s.coordinator.stop();}
 });
+
+test('HQ coordination carries its profile clock and disabling retains the selected model',async()=>{
+ const {getVocalModel}=require('../lib/vocal-models.cjs');let selected='hq5';let now=1000;
+ const s=setup({getProfile:()=>getVocalModel(selected),now:()=>now});s.video.snapshot=async()=>({active:true,sourceEnded:false,lastLatencyMs:8000});
+ try{await s.coordinator.start();assert.equal(s.audio.at(-1).payload.modelId,'hq5');const config=s.videoCalls.find(call=>call.type==='start').config;assert.equal(config.delayMs,8000);assert.equal(config.videoBufferMode,'encoded');
+ now+=8200;s.coordinator.audioState({vocalEpoch:s.coordinator.epoch,vocalRemoverStatus:'on',vocalOutputLatencyMs:20});assert.equal(s.states.at(-1).vocalRemoverStatus,'on');await s.coordinator.health();assert.equal(s.coordinator.enabled,true);
+ await s.coordinator.stop();selected='fast';await s.coordinator.stop();assert.equal(s.states.at(-1).vocalModelId,'fast');assert.equal(s.states.at(-1).vocalRemoverDelayMs,4500);
+ }finally{await s.coordinator.stop();}
+});

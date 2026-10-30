@@ -7,6 +7,8 @@ const {setMediaPlaybackRate}=require('./lib/media-tempo.cjs');
 const {VocalWorker}=require('./lib/vocal-worker.cjs');
 const {VocalVideo}=require('./lib/vocal-video.cjs');
 const {LiveVocalCoordinator}=require('./lib/vocal-coordinator.cjs');
+const {getVocalModel}=require('./lib/vocal-models.cjs');
+const {VocalModelSettings}=require('./lib/vocal-model-settings.cjs');
 
 protocol.registerSchemesAsPrivileged([{scheme:'karaoke-app',privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true,stream:true}}]);
 app.commandLine.appendSwitch('autoplay-policy','no-user-gesture-required');
@@ -18,9 +20,9 @@ const playerUrl=resolvePlayerUrl(process.env.KARAOKE_PLAYER_URL);
 const localOrigin='karaoke-app://app';
 const isLocal=(url,entry)=>url===`${localOrigin}/${entry}`;
 function vocalRuntimeError(message){
-  if(/too slow|five-second/i.test(message))return 'GPU เครื่องนี้ประมวลผลไม่ทันเงื่อนไข 5 วินาที';
+  if(/too slow|five-second/i.test(message))return 'GPU เครื่องนี้ประมวลผลไม่ทันโหมดที่เลือก';
   if(/No hardware GPU/i.test(message))return 'ไม่พบ GPU ที่รองรับ Vocal Remover';
-  if(/integrity|tensor shape|model interface/i.test(message))return 'ไฟล์โมเดล AI ไม่สมบูรณ์ กรุณาติดตั้งโปรแกรมใหม่';
+  if(/integrity|tensor shape|model interface|model identity/i.test(message))return 'ไฟล์หรือข้อมูลโมเดล AI ไม่สมบูรณ์ กรุณาติดตั้งโปรแกรมใหม่';
   if(/DirectML|No module|runtime/i.test(message))return 'เริ่มระบบ AI บน GPU ไม่สำเร็จ กรุณาลองเปิดโปรแกรมใหม่';
   return message;
 }
@@ -107,18 +109,28 @@ app.whenReady().then(async()=>{
   restrictNavigation(window.webContents,url=>isLocal(url,'ui/index.html'));
   restrictNavigation(audioWindow.webContents,url=>isLocal(url,'audio/index.html'));
   restrictNavigation(player.webContents,url=>isPlayerUrl(url,playerUrl));
-  controller=new DesktopAudioController({sendAudio,setPlaybackRate:rate=>setMediaPlaybackRate(player.webContents,playerUrl,rate),publish,
-    setVocal:(enabled,options)=>enabled?vocal.start():vocal.stop(options)});
   const vocalRoot=app.isPackaged?path.join(process.resourcesPath,'vocal'):path.join(__dirname,'vocal');
-  vocalWorker=new VocalWorker({paths:{python:path.join(vocalRoot,'runtime/python/python.exe'),worker:path.join(vocalRoot,'worker.py'),model:path.join(vocalRoot,'runtime/UVR_MDXNET_Main.onnx')},
-    onReady:details=>controller.update({vocalRemoverReady:true,vocalRuntimeStatus:'ready',vocalRuntimeError:null,vocalRemoverError:null,vocalRuntimeDevice:details.name,vocalRuntimeDenoise:details.denoise,vocalRemoverStatus:controller.state.vocalRemoverEnabled?controller.state.vocalRemoverStatus:'ready'}),
+  const settings=new VocalModelSettings(path.join(app.getPath('userData'),'vocal-settings.json'));
+  const selectedModel=settings.read();
+  const modelPaths=id=>({python:path.join(vocalRoot,'runtime/python/python.exe'),worker:path.join(vocalRoot,'worker.py'),model:path.join(vocalRoot,'runtime',getVocalModel(id).filename)});
+  controller=new DesktopAudioController({sendAudio,setPlaybackRate:rate=>setMediaPlaybackRate(player.webContents,playerUrl,rate),publish,initialModelId:selectedModel,
+    setVocal:(enabled,options)=>enabled?vocal.start():vocal.stop(options),
+    selectVocalModel:id=>{
+      controller.update({vocalPreferenceError:null});
+      try{settings.write(id);}catch{controller.update({vocalPreferenceError:'บันทึกโหมดไว้ใช้ครั้งหน้าไม่สำเร็จ'});}
+      vocalWorker.selectModel({profile:getVocalModel(id),paths:modelPaths(id)});
+    },
+  });
+  vocalWorker=new VocalWorker({profile:getVocalModel(selectedModel),paths:modelPaths(selectedModel),
+    onReady:details=>void controller.vocalModelReady(details),
     onResult:packet=>vocal.result(packet),
     onFailure:failure=>{
-      if(failure.fatal){console.warn('Vocal runtime:',failure.message);controller.update({vocalRemoverReady:false,vocalRuntimeStatus:'error',vocalRuntimeError:vocalRuntimeError(failure.message)});}
+      if(failure.fatal){console.warn('Vocal runtime:',failure.message);controller.vocalModelFailed(vocalRuntimeError(failure.message),vocalWorker.profile.id);}
       if(vocal.enabled)void vocal.failure(failure.message,failure.epoch);
     },
   });
   vocal=new LiveVocalCoordinator({worker:vocalWorker,video:new VocalVideo(player.webContents,playerUrl),
+    getProfile:()=>getVocalModel(controller.state.vocalModelId),
     getTrack:()=>({videoId:controller.state.currentVideoId,queueItemId:controller.state.currentQueueItemId,versionType:controller.state.currentVersionType,active:controller.active,origin:new URL(playerUrl).origin}),
     sendAudio:(type,payload)=>controller.audio(type,payload),
     sendResult:packet=>{if(!audioWindow.webContents.isDestroyed())audioWindow.webContents.send('vocal-result',packet);},

@@ -25,6 +25,8 @@ async function wait(read,check,label,timeout=45000){const until=Date.now()+timeo
   await shell.locator('#version-mv').click();
   await remote.getByRole('button',{name:'ค้นหา MV',exact:true}).waitFor();
   await checkReady('MV selector');
+  await shell.locator('#vocal-model').selectOption('hq5');await checkReady('HQ model selector');
+  await shell.locator('#vocal-model').selectOption('fast');await checkReady('Fast model selector');
   await typeIntoFocusedView('เพลงใหม่');
   await wait(()=>input.inputValue(),value=>value==='เพลงใหม่','Thai text reaches search without clicking input');
   await input.evaluate(el=>el.setSelectionRange(4,4));

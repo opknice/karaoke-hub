@@ -1,15 +1,19 @@
 const {randomBytes}=require('node:crypto');
+const {getVocalModel}=require('./vocal-models.cjs');
 class LiveVocalCoordinator {
-  constructor({worker,video,getTrack,sendAudio,sendResult,publish,setBridge,startupDeadlineMs=5000,now=Date.now}) {
-    Object.assign(this,{worker,video,getTrack,sendAudio,sendResult,publish,setBridge,startupDeadlineMs,now});
+  constructor({worker,video,getTrack,sendAudio,sendResult,publish,setBridge,getProfile=()=>getVocalModel('fast'),startupDeadlineMs,now=Date.now}) {
+    Object.assign(this,{worker,video,getTrack,sendAudio,sendResult,publish,setBridge,getProfile,startupDeadlineMs,now});
+    this.profile=getProfile();
     this.epoch=0;this.enabled=false;this.status='ready';this.stopping=null;
   }
   current(epoch=this.epoch) {
     const track=this.getTrack();
     return this.enabled&&epoch===this.epoch&&track.active&&track.versionType==='mv'&&track.videoId===this.bound?.videoId&&track.queueItemId===this.bound?.queueItemId;
   }
+  get deadlineMs(){return this.startupDeadlineMs??this.profile.startupDeadlineMs;}
   state(status,error=null,extra={}) {
-    this.status=status;this.publish({vocalRemoverEnabled:this.enabled,vocalRemoverStatus:status,vocalEpoch:this.epoch,vocalRemoverDelayMs:4500,vocalRemoverError:error,...extra});
+    const profile=this.enabled?this.profile:this.getProfile();
+    this.status=status;this.publish({vocalRemoverEnabled:this.enabled,vocalRemoverStatus:status,vocalEpoch:this.epoch,vocalModelId:profile.id,vocalRemoverDelayMs:profile.delayMs,vocalRemoverError:error,...extra});
   }
   async bounded(promise,ms=1000) {
     let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('ภาพ MV ไม่ตอบสนอง กรุณาลองโหลด Player ใหม่')),ms);})]);}finally{clearTimeout(timer);}
@@ -17,7 +21,7 @@ class LiveVocalCoordinator {
   clearTimers(){clearTimeout(this.deadline);clearInterval(this.monitor);}
   armDeadline(epoch) {
     clearTimeout(this.deadline);
-    this.deadline=setTimeout(()=>void this.failure('AI เริ่มไม่ทันภายใน 5 วินาที จึงกลับไปใช้เสียงต้นฉบับ',epoch),Math.max(1,this.startupDeadlineMs-(this.now()-this.requestedAt)));
+    this.deadline=setTimeout(()=>void this.failure(`AI เริ่มไม่ทันภายใน ${Math.ceil(this.deadlineMs/1000)} วินาที จึงกลับไปใช้เสียงต้นฉบับ`,epoch),Math.max(1,this.deadlineMs-(this.now()-this.requestedAt)));
   }
   async prime(epoch,{resume=false}={}) {
     if(!this.current(epoch))throw new Error('ยกเลิก Vocal Remover แล้ว');
@@ -25,7 +29,7 @@ class LiveVocalCoordinator {
     const startWallMs=this.now()+(resume?10:150);
     await this.bounded(this.video.reset({epoch,startWallMs}));
     if(!this.current(epoch))throw new Error('ยกเลิก Vocal Remover แล้ว');
-    await this.sendAudio('START_VOCAL',{epoch,startWallMs});
+    await this.sendAudio('START_VOCAL',{epoch,startWallMs,modelId:this.profile.id});
     if(!this.current(epoch))throw new Error('ยกเลิก Vocal Remover แล้ว');
     this.state('preparing');this.armDeadline(epoch);
   }
@@ -36,12 +40,13 @@ class LiveVocalCoordinator {
     if(!track.active)throw new Error('เปิดระบบเสียงก่อนใช้ Vocal Remover');
     if(this.current())return;
     if(this.stopping)await this.stopping;
+    this.profile=this.getProfile();
     this.bound={videoId:track.videoId,queueItemId:track.queueItemId};this.enabled=true;const epoch=++this.epoch;
     this.awaitingSeek=false;this.seekTarget=undefined;
     this.token=randomBytes(24).toString('hex');this.requestedAt=this.now();this.state('preparing');
     this.setBridge({token:this.token,epoch});
     try {
-      await this.bounded(this.video.start({epoch,token:this.token,parentOrigin:track.origin,startWallMs:this.now()+60000,delayMs:4500},this.bound));
+      await this.bounded(this.video.start({epoch,token:this.token,parentOrigin:track.origin,startWallMs:this.now()+60000,delayMs:this.profile.delayMs,videoBufferMode:this.profile.videoBufferMode},this.bound));
       await this.prime(epoch);
       this.monitor=setInterval(()=>void this.health(),500);
     }catch(error){
@@ -79,7 +84,7 @@ class LiveVocalCoordinator {
     if(patch.vocalRemoverStatus==='error'){void this.failure(patch.vocalRemoverError||'AI ประมวลผลไม่ทันเพลง',patch.vocalEpoch);return;}
     if(patch.vocalRemoverStatus==='on') {
       const elapsed=this.now()-this.requestedAt+(patch.vocalOutputLatencyMs||0);
-      if(elapsed>this.startupDeadlineMs){void this.failure('อุปกรณ์เสียงเริ่มช้าเกินกำหนด 5 วินาที',patch.vocalEpoch);return;}
+      if(elapsed>this.deadlineMs){void this.failure(`อุปกรณ์เสียงเริ่มช้าเกินกำหนด ${Math.ceil(this.deadlineMs/1000)} วินาที`,patch.vocalEpoch);return;}
       clearTimeout(this.deadline);this.state('on',null,{vocalRemoverStartDelayMs:elapsed});
     }
   }
@@ -93,7 +98,7 @@ class LiveVocalCoordinator {
     const epoch=this.epoch;this.readingHealth=true;
     try{
       const snapshot=await this.bounded(this.video.snapshot(),500);
-      if(this.current(epoch)&&(!snapshot?.active||snapshot.failed||(!snapshot.sourceEnded&&(snapshot.lastLatencyMs<=0||snapshot.lastLatencyMs>4900))))await this.failure('ภาพและเสียงไม่ทันกำหนด จึงกลับไปใช้เสียงต้นฉบับ',epoch);
+      if(this.current(epoch)&&(!snapshot?.active||snapshot.failed||(!snapshot.sourceEnded&&(snapshot.lastLatencyMs<=0||snapshot.lastLatencyMs>this.profile.delayMs+(this.profile.id==='hq5'?500:400)))))await this.failure('ภาพและเสียงไม่ทันกำหนด จึงกลับไปใช้เสียงต้นฉบับ',epoch);
     }catch(error){await this.failure(error.message,epoch);}finally{this.readingHealth=false;}
   }
   async transport(packet) {

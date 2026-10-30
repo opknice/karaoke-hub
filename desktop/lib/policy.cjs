@@ -24,6 +24,7 @@ function validateCommand(type, payload = {}) {
     case 'SET_PLAYER_VOLUME': return Number.isFinite(payload.volume) && payload.volume >= 0 && payload.volume <= 100 && typeof payload.muted === 'boolean';
     case 'SET_SEARCH_VERSION': return payload.version === 'karaoke' || payload.version === 'mv';
     case 'SET_VOCAL_REMOVER': return typeof payload.enabled === 'boolean';
+    case 'SET_VOCAL_MODEL': return Object.keys(payload).length===1&&(payload.modelId==='fast'||payload.modelId==='hq5');
     case 'VOCAL_PLAYBACK_STATE': return typeof payload.playing==='boolean'&&typeof payload.youtubeVideoId==='string'&&/^[\w-]{11}$/.test(payload.youtubeVideoId)
       &&typeof payload.queueItemId==='string'&&payload.queueItemId.length>0&&payload.queueItemId.length<=128;
     case 'TRACK_CHANGED': return (payload.youtubeVideoId === null || (typeof payload.youtubeVideoId === 'string' && /^[\w-]{11}$/.test(payload.youtubeVideoId)))
