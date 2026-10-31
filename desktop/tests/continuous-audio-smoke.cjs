@@ -1,25 +1,27 @@
 const {_electron:electron}=require('playwright'),assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs'),os=require('node:os'),http=require('node:http');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const moduleSource=`import {ContinuousVocalBuffer} from 'karaoke-app://app/audio/continuous-vocal-buffer.mjs';
+const music=(i,right=false)=>(right?.12:.24)+i/(right?20000000:10000000);
+const voice=(i,right=false)=>(right?.04:.08)+(i%(right?61:43))/10000;
 class ContinuityFixture extends AudioWorkletProcessor{
- constructor(){super();this.sourceFrame=0;this.checked=0;this.errors=0;this.maxError=0;this.wanted=false;this.onAt=Infinity;this.changedAt=0;this.aiBase=0;this.aiEpoch=1;this.status='preparing';
-  this.buffer=new ContinuousVocalBuffer({sampleRate,onPcm:p=>this.buffer.receive({epoch:p.epoch,startFrame:p.sequence*sampleRate,pcm:Float32Array.from(p.pcm,v=>v*.25)}),onState:s=>{if(s.kind==='ai'){this.status=s.status;if(s.status==='on')this.onAt=this.buffer.captured;}}});
+ constructor(){super();this.sourceFrame=0;this.checked=0;this.errors=0;this.maxError=0;this.level=0;this.wanted=false;this.onAt=Infinity;this.changedAt=0;this.aiBase=0;this.aiEpoch=1;this.status='preparing';
+  this.buffer=new ContinuousVocalBuffer({sampleRate,onPcm:p=>this.buffer.receive({epoch:p.epoch,startFrame:p.sequence*sampleRate,pcm:Float32Array.from(p.pcm,(_v,i)=>voice(this.buffer.aiBase+p.sequence*sampleRate+Math.floor(i/2),i%2===1))}),onState:s=>{if(s.kind==='ai'){this.status=s.status;if(s.status==='on')this.onAt=this.buffer.captured;}}});
   this.buffer.begin({sessionEpoch:1});this.buffer.beginAi({epoch:1,spanMode:'final',maxResultFrames:sampleRate});
-  this.port.onmessage=({data})=>{if(data.type==='mix'){this.wanted=data.enabled;this.changedAt=this.sourceFrame;this.onAt=Infinity;this.buffer.remove(data.enabled);}if(data.type==='model'){this.buffer.endAi();this.aiBase=this.sourceFrame;this.onAt=Infinity;this.buffer.beginAi({epoch:++this.aiEpoch,spanMode:'final',maxResultFrames:sampleRate});this.buffer.remove(this.wanted);}if(data.type==='pause')this.buffer.pause();if(data.type==='resume')this.buffer.resume();};
+  this.port.onmessage=({data})=>{if(data.type==='level'){this.level=data.level;this.onAt=Infinity;this.buffer.setLevel(data.level);}if(data.type==='mix'){this.wanted=data.enabled;this.changedAt=this.sourceFrame;this.onAt=Infinity;this.buffer.remove(data.enabled);}if(data.type==='model'){this.buffer.endAi();this.aiBase=this.sourceFrame;this.onAt=Infinity;this.buffer.beginAi({epoch:++this.aiEpoch,spanMode:'final',maxResultFrames:sampleRate});this.buffer.remove(this.wanted);}if(data.type==='pause')this.buffer.pause();if(data.type==='resume')this.buffer.resume();};
  }
  process(_input,outputs){const out=outputs[0],n=out[0].length;const left=new Float32Array(n),right=new Float32Array(n);const start=this.sourceFrame,paused=this.buffer.paused;
-  for(let i=0;i<n;i++){left[i]=.2+(start+i)/10000000;right[i]=left[i]*.5;}
+  for(let i=0;i<n;i++){left[i]=music(start+i)+voice(start+i);right[i]=music(start+i,true)+voice(start+i,true);}
   this.buffer.process(left,right,out[0],out[1]);
   for(let i=0;i<n;i++){const frame=start+i;if(paused||frame<sampleRate*8){if(out[0][i]!==0||out[1][i]!==0)this.errors++;continue;}
-   const original=Math.fround(.2+(frame-sampleRate*8)/10000000);let ratio=null;
+   const source=frame-sampleRate*8;let ratio=null;
    if(!this.wanted&&frame-this.changedAt>sampleRate*.04)ratio=1;
-   if(this.wanted&&frame>this.onAt+sampleRate*.04)ratio=.75;
+   if(this.wanted&&frame>this.onAt+sampleRate*.04)ratio=this.level/100;
    if(this.wanted&&frame<this.aiBase+sampleRate*8)ratio=1;
-   if(out[0][i]<original*.74||out[0][i]>original*1.01)this.errors++;
-   if(ratio!==null){const error=Math.max(Math.abs(out[0][i]-original*ratio),Math.abs(out[1][i]-original*ratio*.5));this.maxError=Math.max(this.maxError,error);if(error>1e-6)this.errors++;this.checked++;}
+   if(out[0][i]<music(source)-1e-6||out[0][i]>music(source)+voice(source)+1e-6)this.errors++;
+   if(ratio!==null){const error=Math.max(Math.abs(out[0][i]-music(source)-voice(source)*ratio),Math.abs(out[1][i]-music(source,true)-voice(source,true)*ratio));this.maxError=Math.max(this.maxError,error);if(error>1e-6)this.errors++;this.checked++;}
   }
   if(!paused)this.sourceFrame+=n;if(this.sourceFrame!==this.buffer.captured)this.errors++;
-  if(!this.lastReport||currentTime-this.lastReport>.1){this.lastReport=currentTime;this.port.postMessage({frames:this.sourceFrame,checked:this.checked,errors:this.errors,maxError:this.maxError,status:this.status,paused:this.buffer.paused});}return true;
+  if(!this.lastReport||currentTime-this.lastReport>.1){this.lastReport=currentTime;this.port.postMessage({frames:this.sourceFrame,checked:this.checked,errors:this.errors,maxError:this.maxError,status:this.status,level:this.level,paused:this.buffer.paused});}return true;
  }
 }registerProcessor('continuity-fixture',ContinuityFixture);`;
 (async()=>{
@@ -35,6 +37,7 @@ class ContinuityFixture extends AudioWorkletProcessor{
   const command=data=>app.evaluate(async({webContents},data)=>webContents.getAllWebContents().find(w=>w.getURL()==='karaoke-app://app/audio/index.html').executeJavaScript(`window.__continuityFixture.node.port.postMessage(${JSON.stringify(data)})`),data);
   const wait=async(check,label,timeout=15000)=>{const end=Date.now()+timeout;let last;while(Date.now()<end){last=await read();if(last?.errors)throw new Error(JSON.stringify(last));if(check(last))return last;await sleep(100);}throw new Error(`${label}: ${JSON.stringify(last)}`);};
   await wait(s=>s?.frames>44100*9,'Initial eight-second timestamped dry signal');await command({type:'mix',enabled:true});await wait(s=>s?.status==='on','Same-position AI mix');await sleep(800);
+  for(const level of [25,50,75,100,0]){await command({type:'level',level});await wait(s=>s?.status==='on'&&s.level===level,'Partial singer level');await sleep(200);}
   await command({type:'mix',enabled:false});await sleep(100);await command({type:'model'});await command({type:'mix',enabled:true});await wait(s=>s?.status==='on','Original through fresh AI epoch',12000);
   await command({type:'pause'});const paused=await wait(s=>s?.paused,'Pause');await sleep(500);assert.equal((await read()).frames,paused.frames);await command({type:'resume'});await sleep(800);
   const final=await read();assert.equal(final.errors,0);assert.ok(final.checked>44100*10,JSON.stringify(final));assert.ok(final.maxError<1e-6);

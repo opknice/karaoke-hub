@@ -40,11 +40,25 @@ async function wait(read,check,label,timeout=30000){const end=Date.now()+timeout
    recording=recordComparison(app,path.resolve(__dirname,`../../build/verification/continuous-${profile}`),{delaySeconds:8,durationMs:40000});
    await sleep(10000);const on=await toggleOn();console.log('Recorded toggle on',{modelId:profile,toggleDelayMs:on.vocalRemoverStartDelayMs});await sleep(8000);await toggleOff();
   }else{const on=await toggleOn();console.log('Continuous removal activation',{modelId:profile,toggleDelayMs:on.vocalRemoverStartDelayMs,videoDelayMs:snapshot.lastLatencyMs});await sleep(1500);await toggleOff();}
+  if(process.argv.includes('--levels')){
+   await toggleOn();const slider=shell.locator('#vocal-level');await slider.waitFor();
+   await slider.evaluate(el=>{window.__levelEvents=[];for(const type of ['pointerdown','pointerup','pointercancel','input','change','blur','keydown','keyup'])el.addEventListener(type,e=>{window.__levelEvents.push({type,value:el.value,trusted:e.isTrusted,buttons:e.buttons,key:e.key,pointer:e.pointerId,x:e.clientX});if(window.__levelEvents.length>100)window.__levelEvents.shift();});});
+   const adjust=async level=>{await slider.evaluate((el,level)=>{el.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));el.value=String(level);el.dispatchEvent(new Event('input',{bubbles:true}));document.dispatchEvent(new PointerEvent('pointerup',{bubbles:true}));},level);await wait(state,s=>s.vocalLevel===level,'Selected singer level');await checkTimeline();await wait(()=>remote.getByRole('combobox').evaluate(el=>document.hasFocus()&&document.activeElement===el),Boolean,'Search focus after singer level');};
+   for(const level of [0,25,50,75,100])await adjust(level);
+   await shell.getByRole('button',{name:'ลดเสียงร้อง 1%',exact:true}).click();await wait(state,s=>s.vocalLevel===99,'One-percent down');await shell.getByRole('button',{name:'เพิ่มเสียงร้อง 1%',exact:true}).click();await wait(state,s=>s.vocalLevel===100,'One-percent up');
+   await app.evaluate(({webContents})=>webContents.getAllWebContents().find(w=>w.getURL()==='karaoke-app://app/ui/index.html').focus());
+   const box=await slider.boundingBox();await shell.mouse.move(box.x+5,box.y+box.height/2);await shell.mouse.down();await shell.mouse.move(box.x+box.width-5,box.y+box.height/2,{steps:15});assert.equal(await app.evaluate(({webContents})=>webContents.getFocusedWebContents()?.getURL()),'karaoke-app://app/ui/index.html','Dragging must retain native focus');await shell.mouse.up();await wait(()=>remote.getByRole('combobox').evaluate(el=>document.hasFocus()&&document.activeElement===el),Boolean,'Drag release returns search focus');
+   await adjust(75);await toggleOff();assert.equal((await state()).vocalLevel,75);assert.equal(await slider.isDisabled(),true);await toggleOn();assert.equal((await state()).vocalLevel,75);
+   await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL()==='karaoke-app://app/ui/index.html').setContentSize(960,800));
+   const layout=await shell.evaluate(()=>({width:innerWidth,overflow:document.documentElement.scrollWidth>innerWidth,controls:['vocal-level-control','vocal-model','audio','vocal-remover'].map(id=>{const r=document.getElementById(id).getBoundingClientRect();return{id,x:r.x,right:r.right,top:r.top,bottom:r.bottom};})}));assert.equal(layout.overflow,false,JSON.stringify(layout));assert.ok(layout.controls.every(r=>r.x>=0&&r.right<=layout.width&&r.top>=0&&r.bottom<=112),JSON.stringify(layout));
+   const screenshot=path.resolve(__dirname,`../../build/verification/vocal-level-${profile}-960.png`);fs.mkdirSync(path.dirname(screenshot),{recursive:true});await shell.screenshot({path:screenshot});await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL()==='karaoke-app://app/ui/index.html').setContentSize(1440,900));console.log('PASS singer levels/endpoints/one-percent/drag-focus/off-on/no seek/min960 layout',{profile,screenshot});
+   await toggleOff();
+  }
   if(process.argv.includes('--switch')){
    if(recording)await sleep(5000);
    const other=profile==='fast'?'hq5':'fast',before=(await state()).vocalDisplayTime;
    await shell.locator('#vocal-model').selectOption(other);await wait(()=>shell.locator('#vocal-remover').isEnabled(),Boolean,'AI request available while model loads');await toggleOn();
-   const current=await checkTimeline();assert.equal(current.vocalModelId,other);assert.ok(current.vocalDisplayTime>=before+7,'Original music advances throughout new model preparation');
+   const current=await checkTimeline();assert.equal(current.vocalModelId,other);if(process.argv.includes('--levels'))assert.equal(current.vocalLevel,75);assert.ok(current.vocalDisplayTime>=before+7,'Original music advances throughout new model preparation');
    await sleep(1000);await toggleOff();console.log('PASS original kept playing while a different model prepared; same session, no seek');
   }
   let control;
@@ -58,7 +72,9 @@ async function wait(read,check,label,timeout=30000){const end=Date.now()+timeout
    const paused=await media('window.__karaokeVocalVideo.snapshot().displayTime'),other=profile==='fast'?'hq5':'fast';
    await shell.locator('#vocal-model').selectOption(other);await wait(state,s=>s.vocalModelId===other&&s.vocalRemoverReady,'New model prepared while paused',45000);
    await checkTimeline();assert.equal(await media('window.__karaokeVocalVideo.snapshot().displayTime'),paused,'Model preparation must retain paused position');
-   await shell.locator('#vocal-remover').click();await sleep(300);assert.equal(await media('window.__karaokeVocalVideo.snapshot().displayTime'),paused,'Pending removal must not resume playback');
+   await shell.locator('#vocal-remover').click();await sleep(300);
+   if(process.argv.includes('--levels')){await shell.locator('#vocal-level').evaluate(el=>{el.value='50';el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));});await wait(state,s=>s.vocalLevel===50,'Paused level adjustment');}
+   assert.equal(await media('window.__karaokeVocalVideo.snapshot().displayTime'),paused,'Pending removal/level change must not resume playback');
    await control.getByRole('button',{name:'Resume',exact:true}).click();await wait(state,s=>s.vocalDisplayTime>paused+.1,'Retained resume after model change',2500);
    const on=await wait(state,s=>s.vocalRemoverStatus==='on'||s.vocalRemoverStatus==='error','Paused model choice becomes audible',20000);assert.equal(on.vocalRemoverStatus,'on',JSON.stringify(on));await checkTimeline();await toggleOff();
    console.log('PASS model change while paused retains position; immediate original resume then automatic AI without seek');
@@ -108,6 +124,6 @@ async function wait(read,check,label,timeout=30000){const end=Date.now()+timeout
    }
   }
   console.log('PASS continuous vocal switching',{profile,url});
- }catch(error){if(shell)console.error('State',(await shell.evaluate(()=>window.desktopPlayer.command('REQUEST_STATUS'))).state);if(remote)console.error((await remote.locator('body').innerText()).slice(-800));throw error;}
+ }catch(error){if(shell){console.error('State',(await shell.evaluate(()=>window.desktopPlayer.command('REQUEST_STATUS'))).state);console.error('Level events',JSON.stringify(await shell.evaluate(()=>window.__levelEvents)));}if(remote)console.error((await remote.locator('body').innerText()).slice(-800));throw error;}
  finally{recording?.catch(()=>{});await app.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});
