@@ -1,5 +1,11 @@
 # Desktop releases
 
+## 0.1.8 — 2026-10-31
+
+Added **เสียงร้อง 0–100%** to MV Vocal Remover for both existing Fast/HQ5 models, with a slider and one-percent minus/plus buttons. Aligned estimated-vocal subtraction changes smoothly over20ms without a new seek, capture, inference or startup buffer. Initial selection0 preserves maximum removal; selection is retained across on/off, tracks, model changes and paused updates during the app session. A fresh launch starts at0. Turning removal off restores original playback.
+
+The input queue retains one in-flight and one latest pending value. Model transition states preserve pending selection. Controls defer search focus until interaction completes and prevent overlap with another pending toolbar command. Level states carry a revision to reject stale level snapshots. Model recipes/weights, eight-second prepared MV timeline and the hosted skip/source-stop fix remain unchanged. This native feature requires the new installer.
+
 ## Hosted Player hotfix — 2026-10-31
 
 Finishing/skipping the last MV now explicitly stops the retained YouTube source instead of leaving old music behind an empty screen. Advancing to another queued MV stops the previous source before native preparation starts. Stale pause events from that stop cannot pause the next song. Native preparation/tail cancellation remains in place.

@@ -8,7 +8,7 @@ const vocalLevel=createVocalLevelControl({root:$('vocal-level-control'),
 });
 function render(next=state) {
   state=next;
-  vocalLevel.update(state);
+  vocalLevel.update({...state,controlsBusy:busy});
   $('version-karaoke').setAttribute('aria-pressed',String(state.searchVersion!=='mv'));
   $('version-mv').setAttribute('aria-pressed',String(state.searchVersion==='mv'));
   const active=state.captureStatus==='capturing_original';

@@ -28,3 +28,15 @@ test('Stop cancels pending drag work and late responses; disabled controls issue
 test('latest failed request restores acknowledged selection and reports error without a retry storm',async()=>{
  const s=setup();s.input(75);s.emit(s.slider,'change');s.sent[0].resolve({ok:false,error:'Audio unavailable',state:s.state});await turn();assert.equal(s.output.textContent,'0%');assert.deepEqual(s.errors,['Audio unavailable']);assert.equal(s.focuses,1);assert.equal(s.sent.length,1);
 });
+test('model-transition and removal-off states preserve the latest pending selection on the same live MV',async()=>{
+ const s=setup();s.emit(s.slider,'pointerdown');s.input(10);s.input(75);s.emit(s.doc,'pointerup');
+ s.control.update({...s.state,vocalRemoverEnabled:false});assert.equal(s.output.textContent,'75%');
+ const switching={...s.state,vocalRemoverEnabled:false,vocalResumePending:true,vocalRuntimeStatus:'loading'};s.control.update(switching);
+ s.sent[0].resolve({ok:true,state:{...switching,vocalLevel:10,vocalLevelRevision:1}});await turn();assert.deepEqual(s.sent.map(p=>p.level),[10,75]);
+ s.sent[1].resolve({ok:true,state:{...switching,vocalLevel:75,vocalLevelRevision:2}});await turn();assert.equal(s.output.textContent,'75%');
+});
+test('another shell command prevents a new drag until it and its focus restoration finish; old level reply cannot re-enable it',async()=>{
+ const s=setup();s.input(10);s.control.update({...s.state,controlsBusy:true});assert.equal(s.slider.disabled,true);
+ s.sent[0].resolve({ok:true,state:{...s.state,vocalLevel:10,vocalLevelRevision:1}});await turn();assert.equal(s.slider.disabled,true);
+ s.input(75);assert.equal(s.sent.length,1);s.control.update({...s.state,controlsBusy:false,vocalLevel:10,vocalLevelRevision:1});assert.equal(s.slider.disabled,false);s.input(75);assert.equal(s.sent.length,2);
+});

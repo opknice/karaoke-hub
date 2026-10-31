@@ -4,11 +4,13 @@ Electron app targeting Windows 10 and Windows 11 **x64**. The local toolbar adds
 
 ## Install and use
 
-Build output: `dist/KaraokeHub-Setup-0.1.7-x64.exe`. Run the installer, open KARAOKE.HUB, select an MV in the normal Player. The app automatically prepares its eight-second playback buffer and the selected AI model. If you previously stopped the audio system, click **เปิดระบบเสียง** to prepare it again. The unpacked executable is `dist/win-unpacked/KARAOKE.HUB.exe`; keep its adjacent files together.
+Build output: `dist/KaraokeHub-Setup-0.1.8-x64.exe`. Run the installer, open KARAOKE.HUB, select an MV in the normal Player. The app automatically prepares its eight-second playback buffer and the selected AI model. If you previously stopped the audio system, click **เปิดระบบเสียง** to prepare it again. The unpacked executable is `dist/win-unpacked/KARAOKE.HUB.exe`; keep its adjacent files together.
 
 - Key: -6 to +6 semitones, one semitone per click.
 - Tempo: one percentage point per click, for example 125% → 126% or 125% → 124%, within 25%–200%. The normal rate is 100%. Page Up/Down use the same one-percent step when not editing search. The app sets the trusted Player's HTML media rate directly and verifies the accepted rate instead of jumping through YouTube's discrete API presets.
 - **คืนค่าเดิม** resets key and tempo without restarting the song.
+- With Vocal Remover enabled on an MV, **เสียงร้อง** selects 0–100% using the slider or one-percent minus/plus buttons. 0% is maximum available removal; 100% restores original vocal level. This changes the aligned vocal contribution, not master gain. Selection starts at0 each app launch and stays through on/off, songs, pause/seek and model changes within that session. Turning removal off plays original music without erasing the selection. AI loading/failure still falls back to original playback.
+- Slider dragging and held arrow-key adjustments retain native focus until completion; finishing returns typing to song search. Other pending toolbar commands temporarily disable the slider to preserve focus. The fixed-height controls fit the minimum960px window. Stem separation may still affect instruments or leave residual vocals; percentage control does not change the model's quality.
 - **หยุดระบบเสียง** releases capture and returns audio playback to the original Player.
 - Key resets when the video changes. Audio settings are local and not written to the room database.
 - F11 toggles fullscreen; **โหลดใหม่** recovers from a page/network failure.

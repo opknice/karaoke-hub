@@ -5,7 +5,7 @@ const valid=level=>Number.isInteger(level)&&level>=0&&level<=100;
 export function createVocalLevelControl({root,send,focus,onError=()=>{}}){
   const slider=root.querySelector('input'),output=root.querySelector('output');
   const down=root.querySelector('[data-level-down]'),up=root.querySelector('[data-level-up]');
-  let selected=0,acknowledged=0,serverRevision=-1,enabled=false;
+  let selected=0,acknowledged=0,serverRevision=-1,enabled=false,live=false,controlsBusy=false;
   let inFlight=false,pending=null,serial=0,generation=0,pointer=false,keyboard=false,finishing=false;
   const draw=()=>{
     slider.value=String(selected);slider.disabled=!enabled;
@@ -17,16 +17,17 @@ export function createVocalLevelControl({root,send,focus,onError=()=>{}}){
     try{const result=focus();result?.catch?.(error=>onError(error.message));}catch(error){onError(error.message);}
   };
   const update=state=>{
+    if(typeof state.controlsBusy==='boolean')controlsBusy=state.controlsBusy;
     const revision=state.vocalLevelRevision;
     if(valid(state.vocalLevel)&&Number.isSafeInteger(revision)&&revision>=serverRevision){acknowledged=state.vocalLevel;serverRevision=revision;}
-    const next=Boolean(state.supportsContinuousVocal&&state.vocalBufferActive&&state.captureStatus==='capturing_original'&&state.vocalRemoverEligible
-      &&(state.vocalRemoverEnabled||state.vocalResumePending)&&state.vocalRuntimeStatus!=='error'&&state.vocalRemoverStatus!=='error');
-    if(enabled!==next){generation++;enabled=next;if(!enabled){pending=null;pointer=false;keyboard=false;finishing=false;}}
-    if(!enabled||(!inFlight&&!pending&&!pointer&&!keyboard))selected=acknowledged;
-    draw();
+    const nextLive=Boolean(state.supportsContinuousVocal&&state.vocalBufferActive&&state.captureStatus==='capturing_original'&&state.vocalRemoverEligible);
+    if(live!==nextLive){generation++;live=nextLive;if(!live){pending=null;pointer=false;keyboard=false;finishing=false;}}
+    enabled=Boolean(live&&!controlsBusy&&(state.vocalRemoverEnabled||state.vocalResumePending)&&state.vocalRuntimeStatus!=='error'&&state.vocalRemoverStatus!=='error');
+    if(!live||(!inFlight&&!pending&&!pointer&&!keyboard))selected=acknowledged;
+    draw();settle();
   };
   const pump=async()=>{
-    if(inFlight||!pending||!enabled)return;
+    if(inFlight||!pending||!live)return;
     const request=pending,epoch=generation;pending=null;inFlight=true;let failed=false;
     try{
       const result=await send(request.level);

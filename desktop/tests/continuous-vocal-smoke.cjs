@@ -12,6 +12,7 @@ async function wait(read,check,label,timeout=30000){const end=Date.now()+timeout
  try{
   shell=await wait(async()=>app.context().pages().find(p=>p.url()==='karaoke-app://app/ui/index.html'),Boolean,'Shell');
   remote=await wait(async()=>app.context().pages().find(p=>p.url().startsWith(url)),Boolean,'Player');
+  if(process.argv.includes('--levels-debug'))await app.evaluate(({ipcMain,webContents})=>{const original=ipcMain._invokeHandlers?.get('shell-command');if(original)ipcMain._invokeHandlers.set('shell-command',(event,message)=>{if(message?.type!=='REQUEST_STATUS')console.log('Diagnostic shell command',message?.type,JSON.stringify(message?.payload));return original(event,message);});for(const contents of webContents.getAllWebContents())if(contents.getURL().includes('/player'))contents.on('did-start-navigation',(_event,url,_inPlace,main)=>console.log('Diagnostic navigation',url,main));});
   const state=async()=>(await shell.evaluate(()=>window.desktopPlayer.command('REQUEST_STATUS'))).state;
   const media=expression=>app.evaluate(async({webContents},{url,expression})=>{const contents=webContents.getAllWebContents().find(w=>w.getURL().startsWith(url));return contents.mainFrame.frames.find(f=>/^https:\/\/www\.youtube(?:-nocookie)?\.com\/embed\//.test(f.url))?.executeJavaScript(expression);},{url,expression});
   await wait(()=>remote.locator('body').innerText(),text=>/ROOM:\s*[A-Z0-9]{6}/.test(text),'Room');
