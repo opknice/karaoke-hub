@@ -1,5 +1,11 @@
 # Desktop releases
 
+## Hosted Player hotfix — 2026-10-31
+
+Finishing/skipping the last MV now explicitly stops the retained YouTube source instead of leaving old music behind an empty screen. Advancing to another queued MV stops the previous source before native preparation starts. Stale pause events from that stop cannot pause the next song. Native preparation/tail cancellation remains in place.
+
+This is a hosted `/player` fix compatible with the existing 0.1.7 installer. Click **โหลดใหม่** or reopen the program to load it; no installer replacement is needed. Regression tests cover an empty queue, pending preparation, native teardown, and an automatically playing next song.
+
 ## 0.1.7 — 2026-10-30
 
 Prepared MVs now share an eight-second original/audio/video timeline for both Fast and HQ5. The selected model runs in the background while original music plays. Vocal Remover switches by a 20ms time-aligned subtraction ramp, with no seek, rewind or fresh playback delay on a toggle. Original music continues during model loading, model changes and AI failure.

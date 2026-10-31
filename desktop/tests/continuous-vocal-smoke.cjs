@@ -88,7 +88,25 @@ async function wait(read,check,label,timeout=30000){const end=Date.now()+timeout
    await control.getByRole('button',{name:'Resume',exact:true}).click();
    await wait(state,s=>s.vocalBufferStatus!=='paused','Resume delayed tail');assert.equal(await media(`(document.querySelector('video.html5-main-video')||document.querySelector('video')).ended`),true,'Resuming the delayed tail must not restart YouTube');
    await wait(state,s=>!s.currentVideoId&&!s.vocalBufferActive,'Final tail completed once',12000);console.log('PASS retained pause/resume, paused seek and paused original end-tail');
-  }else await remote.evaluate(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'End',code:'End',bubbles:true,cancelable:true})));
+  }else{
+   if(process.argv.includes('--skip-ai'))await toggleOn();
+   if(process.argv.includes('--skip-next-check')){
+    await shell.locator('#version-mv').click();await remote.getByRole('combobox').evaluate(el=>el.focus());await remote.keyboard.insertText('เชือกวิเศษ LABANOON Official MV');await remote.getByRole('button',{name:'ค้นหา MV',exact:true}).click();await remote.getByRole('option').filter({hasText:'เชือกวิเศษ'}).first().click();await wait(()=>remote.getByRole('combobox').inputValue(),text=>text==='','Next MV queued');console.log('Queued next MV for skip regression');
+    await remote.evaluate(()=>{const post=window.postMessage.bind(window);window.postMessage=(packet,...args)=>{if(packet?.source==='karaoke-hub-page'&&packet.type==='PREPARE_PLAYER_TRACK'){window.__skipHeld=true;setTimeout(()=>post(packet,...args),1500);return;}return post(packet,...args);};});
+    await remote.evaluate(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'End',code:'End',bubbles:true,cancelable:true})));
+    await wait(()=>remote.evaluate(()=>window.__skipHeld===true),Boolean,'Next native preflight held');assert.equal(await media(`(document.querySelector('video.html5-main-video')||document.querySelector('video')).paused`),true,'Old source must stop during next MV preparation');
+    await wait(state,s=>s.currentQueueItemId&&s.currentQueueItemId!==initial.currentQueueItemId&&s.vocalVideoReady&&s.vocalDisplayTime>0&&s.outputRms>.001,'Next MV automatically plays after held preparation',25000);
+    console.log('PASS skip stops old source during held next-MV preparation; next MV starts automatically');
+   }
+   await remote.evaluate(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'End',code:'End',bubbles:true,cancelable:true})));
+   if(process.argv.includes('--skip-check')){
+    await wait(state,s=>!s.currentQueueItemId&&!s.vocalBufferActive,'Skipped final queue item clears native buffer');
+    const source=await media(`(()=>{const v=document.querySelector('video.html5-main-video')||document.querySelector('video');return v?{paused:v.paused,ended:v.ended,time:v.currentTime}:null;})()`);
+    assert.ok(!source||source.paused||source.ended,`The old source must stop behind an empty screen: ${JSON.stringify(source)}`);
+    await wait(state,s=>s.outputRms<.00001,'Skipped audio becomes silent',1500);await sleep(1000);assert.ok((await state()).outputRms<.00001,'Old audio must not return after teardown');
+    console.log('PASS skip of final MV stops original source, flushes delayed audio and stays silent');
+   }
+  }
   console.log('PASS continuous vocal switching',{profile,url});
  }catch(error){if(shell)console.error('State',(await shell.evaluate(()=>window.desktopPlayer.command('REQUEST_STATUS'))).state);if(remote)console.error((await remote.locator('body').innerText()).slice(-800));throw error;}
  finally{recording?.catch(()=>{});await app.close();}

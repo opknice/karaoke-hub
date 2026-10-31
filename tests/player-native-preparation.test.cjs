@@ -4,10 +4,10 @@ const noop=()=>{};
 function setup({prepare=async()=>({native:true,buffered:true})}={}){
  const loads=[],times=[],instances=[],ready=[];let events,ends=0;
  const api={PlayerState:{PLAYING:1,PAUSED:2,BUFFERING:3,ENDED:0},Player:class{
-  constructor(_node,config){events=config.events;instances.push(this);this.plays=0;this.state=1;}
+  constructor(_node,config){events=config.events;instances.push(this);this.plays=0;this.stops=0;this.state=1;}
   setVolume(){}mute(){}unMute(){}setPlaybackRate(){}getPlaybackRate(){return 1;}getAvailablePlaybackRates(){return[1];}
   loadVideoById(p){loads.push(p);}cueVideoById(p){loads.push(p);}getVideoUrl(){return'https://www.youtube.com/watch?v='+karaoke.nowPlaying.video.youtube_video_id;}getDuration(){return 100;}getCurrentTime(){return 20;}getPlayerState(){return this.state;}
-  seekTo(){}playVideo(){this.plays++;}pauseVideo(){}destroy(){}
+  seekTo(){}playVideo(){this.plays++;}pauseVideo(){}stopVideo(){this.stops++;this.state=0;}destroy(){}
  }};
  const karaoke={nowPlaying:{id:'q-1',video:{youtube_video_id:'abcdefghijk',duration:100,title:'MV',version_type:'mv'},singers:[]},isPlaying:true,volume:80,isMuted:false,queue:[],setIsPlaying:noop,setRoomPlayback:async()=>{},setCurrentTime:t=>times.push(t),setDuration:noop,setVolume:noop,setIsMuted:noop,skipSong:async()=>{},onSongEnd:async()=>{ends++;},handlePlaybackError:async()=>{}};
  const Player=loadPlayer({'@/context/KaraokeContext':{useKaraoke:()=>karaoke,usePlaybackClock:()=>({currentTime:10,duration:100})},'@/lib/youtube-iframe-api':{loadYouTubeIframeApi:async()=>api},'@/lib/queue-algorithm':{formatDuration:String},'@/lib/native-player-preparation':{prepareNativePlayerTrack:prepare,notifyNativePlayerReady:t=>ready.push(t)}},{window:{location:{origin:'http://localhost'},postMessage(){}},location:{origin:'http://localhost'},document:{createElement:()=>({})},YT:api});
@@ -31,6 +31,26 @@ test('explicit cancelled preflight does not load media and a later manual prepar
  let attempt=0;const s=setup({prepare:async()=>++attempt===1?{native:true,buffered:false,cancelled:true}:{native:true,buffered:true}});
  try{await s.render();await act(async()=>s.events.onReady({target:s.instances[0]}));assert.equal(s.loads.length,0);await s.render({nativeContinuous:true,nativePlaybackSessionEpoch:2});assert.equal(s.loads.length,1,'Manual Start can retry without selecting the song again');}
  finally{await s.unmount();}
+});
+test('clearing the last queue item stops the old YouTube source instead of leaving it playing behind an empty screen',async()=>{
+ const s=setup(),native={nativeContinuous:true,nativePlaybackSessionEpoch:2};try{await s.render(native);await act(async()=>s.events.onReady({target:s.instances[0]}));const player=s.instances[0];assert.equal(s.loads.length,1);
+  s.karaoke.nowPlaying=null;s.karaoke.isPlaying=false;await s.render(native);assert.equal(player.stops,1,'An empty queue must explicitly stop the retained YouTube player');
+  const plays=player.plays,loads=s.loads.length;await s.render({nativeContinuous:false,nativePlaybackSessionEpoch:0});assert.equal(player.stops,1,'Late native teardown cannot restart or repeatedly stop playback');assert.equal(player.plays,plays);assert.equal(s.loads.length,loads);
+ }finally{await s.unmount();}
+});
+test('clearing a queue item during native preparation stops the source and a late reply cannot start it',async()=>{
+ let release;const s=setup({prepare:()=>new Promise(resolve=>{release=resolve;})});try{await s.render();await act(async()=>s.events.onReady({target:s.instances[0]}));
+  s.karaoke.nowPlaying=null;s.karaoke.isPlaying=false;await s.render();assert.equal(s.instances[0].stops,1);await act(async()=>release({native:true,buffered:true}));assert.equal(s.loads.length,0);
+ }finally{await s.unmount();}
+});
+test('skipping to another queued MV stops the old source while the next native preparation is pending',async()=>{
+ let attempt=0,release;const s=setup({prepare:()=>++attempt===1?Promise.resolve({native:true,buffered:true}):new Promise(resolve=>{release=resolve;})});
+ try{await s.render();await act(async()=>s.events.onReady({target:s.instances[0]}));assert.equal(s.loads.length,1);
+  s.karaoke.setIsPlaying=playing=>{s.karaoke.isPlaying=playing;};await s.render();
+  s.karaoke.nowPlaying={...s.karaoke.nowPlaying,id:'q-2',video:{...s.karaoke.nowPlaying.video,youtube_video_id:'lmnopqrstuv'}};await s.render();assert.equal(s.instances[0].stops,1,'The old source must not play into the next MV preflight');assert.equal(s.loads.length,1);
+  await act(async()=>s.events.onStateChange({target:s.instances[0],data:2}));assert.equal(s.karaoke.isPlaying,true,'PAUSED from stopping the previous source must not pause the next queued MV');
+  await act(async()=>release({native:true,buffered:true}));assert.equal(s.loads.length,2);assert.equal(s.loads[1].videoId,'lmnopqrstuv');
+ }finally{await s.unmount();}
 });
 test('paused continuous tail resumes remaining time without restarting the ended source',async context=>{
  context.mock.timers.enable({apis:['setTimeout','Date']});const s=setup();const props={nativeContinuous:true,nativeVocalDelayMs:8000,nativePlaybackSessionEpoch:1,nativeSourceEnded:true,nativeVideoReady:true};

@@ -450,6 +450,10 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
               readAvailablePlaybackRates(event.target);
               setDurationRef.current(event.target.getDuration() || fallbackDurationRef.current);
             } else if (event.data === youtubeApi.PlayerState.PAUSED) {
+              const prepared = preparedTrackRef.current;
+              if (!prepared || prepared.itemId !== currentItemIdRef.current) return;
+              const actual = event.target.getVideoUrl?.();
+              if (actual && /[?&]v=([\w-]{11})(?:&|$)/.exec(actual)?.[1] !== prepared.videoId) return;
               if (autoplayAttemptItemIdRef.current === currentItemIdRef.current) return;
               isPlayingRef.current = false;
               setIsPlayingRef.current(false);
@@ -546,9 +550,25 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     }
 
     const player = playerRef.current;
-    if(!videoId){++preparationSerialRef.current;preparationAbortRef.current?.abort();preparedTrackRef.current=null;return;}
+    if (!videoId) {
+      ++preparationSerialRef.current;
+      preparationAbortRef.current?.abort();
+      preparationPendingRef.current = false;
+      preparedTrackRef.current = null;
+      playingItemIdRef.current = null;
+      autoplayAttemptItemIdRef.current = null;
+      delayedEndRef.current.cancel();
+      // The iframe survives an empty queue. Stop its old source explicitly so
+      // native teardown cannot expose music behind the empty-player screen.
+      try { player?.stopVideo(); } catch {}
+      return;
+    }
     if (!player || !playerReadyRef.current) return;
 
+    playingItemIdRef.current = null;
+    autoplayAttemptItemIdRef.current = null;
+    preparedTrackRef.current = null;
+    try { player.stopVideo(); } catch {}
     void prepareAndLoadRef.current(player,videoId,currentItemId,playbackStartSeconds);
   }, [clearAutoplayCheck, currentItemId, playbackStartSeconds, resetTempo, setCurrentTime, verifyAutoplayStarted, videoId]);
 
