@@ -1,4 +1,6 @@
-# Vocal level 0–100% — proposed short design
+# Vocal level 0–100% — approved short design
+
+Approved by the user on2026-10-31: พัฒนาได้.
 
 ## Intent and agreed scope
 
