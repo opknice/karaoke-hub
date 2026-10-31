@@ -87,6 +87,9 @@ export class AudioEngine {
         g.vocal.port.postMessage({type:'BEGIN_AI',epoch:payload.epoch,spanMode:profile.spanMode,maxResultFrames:profile.maxResultFrames});break;
       }
       case 'SET_VOCAL_MIX':g.vocal.port.postMessage({type:'SET_MIX',enabled:payload.enabled});break;
+      case 'SET_VOCAL_LEVEL':
+        if(!g.sessionEpoch||!Number.isInteger(payload.level)||payload.level<0||payload.level>100)throw new RangeError('Invalid vocal level/session');
+        g.vocal.port.postMessage({type:'SET_LEVEL',level:payload.level});break;
       case 'END_VOCAL_AI':g.vocalEpoch=0;g.vocal.port.postMessage({type:'END_AI'});break;
       case 'PAUSE_VOCAL_SESSION':g.vocal.port.postMessage({type:'PAUSE_SESSION'});break;
       case 'RESUME_VOCAL_SESSION':g.vocal.port.postMessage({type:'RESUME_SESSION'});break;

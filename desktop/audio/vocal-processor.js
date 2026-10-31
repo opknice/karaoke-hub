@@ -18,6 +18,7 @@ class DesktopVocalProcessor extends AudioWorkletProcessor {
         if(data?.type==='BEGIN_AI')this.continuous.beginAi(data);
         if(data?.type==='END_AI')this.continuous.endAi();
         if(data?.type==='SET_MIX')this.continuous.remove(data.enabled);
+        if(data?.type==='SET_LEVEL')this.continuous.setLevel(data.level);
         if(data?.type==='PAUSE_SESSION')this.continuous.pause();
         if(data?.type==='RESUME_SESSION')this.continuous.resume();
         if(data?.type==='END_SESSION')this.continuous.disable();

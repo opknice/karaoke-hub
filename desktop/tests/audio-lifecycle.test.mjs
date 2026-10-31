@@ -18,6 +18,8 @@ test('continuous capture is buffered before context resume and separates session
   vocal.port.onmessage({data:{type:'continuous-state',kind:'session',sessionEpoch:6,status:'playing'}});assert.equal(events.length,0);
   vocal.port.onmessage({data:{type:'continuous-state',kind:'session',sessionEpoch:7,status:'playing'}});assert.equal(events.at(-1).vocalBufferActive,true);assert.equal(events.at(-1).vocalPlaybackDelayMs,8000);
   await engine.apply('SET_VOCAL_MIX',{enabled:true},1);assert.equal(vocal.messages.at(-1).type,'SET_MIX');
+  await engine.apply('SET_VOCAL_LEVEL',{level:25},1);assert.deepEqual(vocal.messages.at(-1),{type:'SET_LEVEL',level:25});assert.equal(engine.graph.sessionEpoch,7);
+  for(const level of [-1,101,.5,NaN,Infinity,'50'])await assert.rejects(engine.apply('SET_VOCAL_LEVEL',{level},1));
   await engine.apply('END_VOCAL_AI',{},1);assert.equal(engine.graph.sessionEpoch,7,'Model stop does not stop raw timeline');assert.equal(vocal.messages.at(-1).type,'END_AI');
   await engine.apply('PREPARE_VOCAL_SESSION',{sessionEpoch:8,sessionId:'session-queue-2'},1);assert.equal(vocal.messages.at(-1).type,'BEGIN_SESSION');
  }finally{await engine.stop();if(descriptor)Object.defineProperty(globalThis,'navigator',descriptor);else delete globalThis.navigator;globalThis.AudioContext=savedContext;globalThis.AudioWorkletNode=savedWorklet;}
