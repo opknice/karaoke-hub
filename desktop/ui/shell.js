@@ -1,7 +1,14 @@
+import {createVocalLevelControl} from './vocal-level.mjs';
 let state={},busy=false,busyType=null,commandId=0;
 const $=id=>document.getElementById(id);
+const vocalLevel=createVocalLevelControl({root:$('vocal-level-control'),
+  send:level=>{$('message').textContent='';return window.desktopPlayer.command('SET_VOCAL_LEVEL',{level});},
+  focus:()=>window.desktopPlayer.command('FOCUS_PLAYER_SEARCH'),
+  onError:error=>{$('message').textContent=error;},
+});
 function render(next=state) {
   state=next;
+  vocalLevel.update(state);
   $('version-karaoke').setAttribute('aria-pressed',String(state.searchVersion!=='mv'));
   $('version-mv').setAttribute('aria-pressed',String(state.searchVersion==='mv'));
   const active=state.captureStatus==='capturing_original';

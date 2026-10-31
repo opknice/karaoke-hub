@@ -2,8 +2,8 @@ const {randomBytes}=require('node:crypto');
 const {getVocalModel}=require('./vocal-models.cjs');
 const cancelled=()=>Object.assign(new Error('ยกเลิกการเตรียมเพลงแล้ว'),{name:'AbortError'});
 class ContinuousVocalCoordinator{
-  constructor({worker,video,getTrack,ensureCapture,sendAudio,sendResult,publish,setBridge,getProfile=()=>getVocalModel('fast'),now=Date.now}){
-    Object.assign(this,{worker,video,getTrack,ensureCapture,sendAudio,sendResult,publish,setBridge,getProfile,now});
+  constructor({worker,video,getTrack,ensureCapture,sendAudio,sendResult,publish,setBridge,getProfile=()=>getVocalModel('fast'),getLevel=()=>0,now=Date.now}){
+    Object.assign(this,{worker,video,getTrack,ensureCapture,sendAudio,sendResult,publish,setBridge,getProfile,getLevel,now});
     this.session=null;this.epoch=0;this.nextSessionEpoch=0;
   }
   get active(){return Boolean(this.session?.prepared);}
@@ -33,7 +33,7 @@ class ContinuousVocalCoordinator{
       if(!this.current(s))throw cancelled();
       await this.ensureCapture({sessionEpoch:s.epoch,sessionId:s.id});
       if(!this.current(s))throw cancelled();
-      s.prepared=true;this.setBridge({epoch:s.epoch,token:s.token});
+      s.prepared=true;await this.setLevel(this.getLevel());if(!this.current(s))throw cancelled();this.setBridge({epoch:s.epoch,token:s.token});
       this.state({vocalBufferStatus:s.paused?'paused':'priming',vocalVideoReady:false,vocalSignalReady:false,vocalRemoverStatus:'ready',vocalRemoverError:null,vocalSourceEnded:false,vocalDisplayTime:null});
       if(s.paused)await this.sendAudio('PAUSE_VOCAL_SESSION',{});
       if(this.worker.ready)await this.beginAi();
@@ -61,6 +61,7 @@ class ContinuousVocalCoordinator{
     try{
       await this.sendAudio('BEGIN_VOCAL_AI',{epoch,modelId:this.getProfile().id});
       if(!this.current(s)||epoch!==this.epoch)return;
+      await this.setLevel(s.level);if(!this.current(s)||epoch!==this.epoch)return;
       this.state({vocalSignalReady:false,vocalAiStatus:'preparing',vocalRemoverStatus:s.wanted?'preparing':'ready',vocalRemoverError:null});
       if(s.wanted)await this.sendAudio('SET_VOCAL_MIX',{enabled:true});this.armAiDeadline(s);
     }catch(error){await this.failure(error.message,epoch);}
@@ -70,6 +71,11 @@ class ContinuousVocalCoordinator{
     if(!s)return;this.clearAiTimers(s);s.aiActive=false;s.aiReady=false;s.audibleOn=false;
     await this.sendAudio('END_VOCAL_AI',{}).catch(()=>{});
     if(this.current(s))this.state({vocalSignalReady:false,vocalAiStatus:'preparing'});
+  }
+  async setLevel(level){
+    if(!Number.isInteger(level)||level<0||level>100)throw new RangeError('Invalid vocal level');
+    const s=this.session;if(!this.current(s)||!s.prepared)return;s.level=level;
+    await this.sendAudio('SET_VOCAL_LEVEL',{level});
   }
   async setRemoval(enabled){
     const s=this.session;if(!this.current(s)||!s.prepared)throw new Error('กรุณาเตรียมระบบเสียงของเพลง MV ก่อน');

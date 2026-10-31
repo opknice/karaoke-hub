@@ -116,6 +116,7 @@ app.whenReady().then(async()=>{
   const modelPaths=id=>({python:path.join(vocalRoot,'runtime/python/python.exe'),worker:path.join(vocalRoot,'worker.py'),model:path.join(vocalRoot,'runtime',getVocalModel(id).filename)});
   controller=new DesktopAudioController({sendAudio,setPlaybackRate:rate=>setMediaPlaybackRate(player.webContents,playerUrl,rate),publish,initialModelId:selectedModel,supportsContinuousVocal:true,
     setVocal:enabled=>vocal.setRemoval(enabled),
+    setVocalLevel:level=>vocal.setLevel(level),
     suspendVocal:()=>vocal.suspendAi(),closePlayback:options=>vocal.stopSession(options),
     preparePlayback:track=>vocal.prepare({...track,origin:new URL(playerUrl).origin}),
     selectVocalModel:id=>{
@@ -134,6 +135,7 @@ app.whenReady().then(async()=>{
   });
   vocal=new ContinuousVocalCoordinator({worker:vocalWorker,video:new VocalVideo(player.webContents,playerUrl),
     getProfile:()=>getVocalModel(controller.state.vocalModelId),
+    getLevel:()=>controller.state.vocalLevel,
     ensureCapture:configuration=>controller.ensureBufferedCapture(configuration),
     getTrack:()=>({videoId:controller.state.currentVideoId,queueItemId:controller.state.currentQueueItemId,versionType:controller.state.currentVersionType,active:controller.active,playing:controller.state.vocalPlaybackPlaying,origin:new URL(playerUrl).origin}),
     sendAudio:(type,payload)=>controller.audio(type,payload),
@@ -171,12 +173,15 @@ app.whenReady().then(async()=>{
   });
   ipcMain.handle('shell-command',async(event,message)=>{
     if(!validSender(event,window.webContents,url=>isLocal(url,'ui/index.html'))) return {ok:false,error:'Untrusted shell'};
-    if(message?.type!=='REQUEST_STATUS') restorePlayerSearchFocus();
+    if(message?.type==='FOCUS_PLAYER_SEARCH'&&!validateCommand(message.type,message.payload))return{ok:false,error:'Invalid focus command'};
+    const restore=message?.type!=='REQUEST_STATUS'&&message?.type!=='SET_VOCAL_LEVEL';
+    if(restore) restorePlayerSearchFocus();
     try {
+      if(message?.type==='FOCUS_PLAYER_SEARCH')return{ok:true,state:controller.state};
       if(message?.type==='RELOAD_PLAYER') {await controller.disconnect();if(!vocalWorker.ready){controller.update({vocalRuntimeStatus:'loading',vocalRuntimeError:null});vocalWorker.start();}await player.webContents.loadURL(playerUrl).catch(()=>{});return {ok:true,state:controller.state};}
       return await controller.command(message?.type,message?.payload);
     } finally {
-      if(message?.type!=='REQUEST_STATUS') restorePlayerSearchFocus();
+      if(restore) restorePlayerSearchFocus();
     }
   });
   ipcMain.on('audio-reply',(event,{id,result}={})=>{

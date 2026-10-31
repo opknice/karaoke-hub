@@ -21,6 +21,18 @@ test('pending model preparation accepts removal intent while keeping raw capture
  const s=setup();await s.c.command('PREPARE_PLAYER_TRACK',mv());s.c.update({vocalRemoverReady:false,vocalRuntimeStatus:'loading'});
  const result=await s.c.command('SET_VOCAL_REMOVER',{enabled:true});assert.equal(result.ok,true,result.error);assert.equal(s.mix.at(-1),true);assert.equal(s.c.active,true);
 });
+test('native singer level validates strict percent values and retains selection through tracks, models and Stop',async()=>{
+ const levels=[],s=setup({constructorOptions:{setVocalLevel:async level=>levels.push(level)}});assert.equal(s.c.state.vocalLevel,0);
+ for(const level of [-1,101,.5,NaN,Infinity,'25',null])assert.equal(validateCommand('SET_VOCAL_LEVEL',{level}),false);
+ assert.equal(validateCommand('SET_VOCAL_LEVEL',{level:25,extra:true}),false);assert.equal(validateCommand('SET_VOCAL_LEVEL',{level:100}),true);
+ await s.c.command('PREPARE_PLAYER_TRACK',mv());const count=s.prepared.length;assert.equal((await s.c.command('SET_VOCAL_LEVEL',{level:25})).ok,true);assert.deepEqual(levels,[25]);assert.equal(s.prepared.length,count);
+ await s.c.command('SET_VOCAL_MODEL',{modelId:'hq5'});await s.c.command('TRACK_CHANGED',mv('q-2'));await s.c.command('STOP_AUDIO');assert.equal(s.c.state.vocalLevel,25);
+ await s.c.command('SET_VOCAL_LEVEL',{level:75});assert.equal(s.c.state.vocalLevel,75);assert.equal(s.c.state.vocalLevelRevision,2);assert.deepEqual(levels,[25],'An inactive session only stores the selection');
+});
+test('Stop revokes a delayed level acknowledgement without changing the retained selection or reviving playback',async()=>{
+ let release;const s=setup({constructorOptions:{setVocalLevel:()=>new Promise(resolve=>{release=resolve;})}});await s.c.command('PREPARE_PLAYER_TRACK',mv());
+ const pending=s.c.command('SET_VOCAL_LEVEL',{level:90});await turn();const stop=s.c.command('STOP_AUDIO');release();await pending;await stop;assert.equal(s.c.state.vocalLevel,0);assert.equal(s.c.active,false);
+});
 test('Stop invalidates an in-flight buffered capture immediately rather than waiting for its acknowledgement',async()=>{
  let finish;const s=setup({sendAudio:type=>type==='START_AUDIO'?new Promise(r=>{finish=r;}):{ok:true}});
  const preparing=s.c.command('PREPARE_PLAYER_TRACK',mv());await turn();const stop=s.c.command('STOP_AUDIO');await turn();

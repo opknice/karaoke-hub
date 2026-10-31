@@ -49,6 +49,15 @@ test('Stop during preflight revokes pending capture and later worker readiness c
  const pending=s.coordinator.prepare(s.track);await turn();await s.coordinator.stopSession({restorePosition:false});release();await assert.rejects(pending,error=>error.name==='AbortError');
  await s.coordinator.beginAi();assert.equal(s.coordinator.active,false);assert.equal(s.audio.filter(c=>c.type==='BEGIN_VOCAL_AI').length,0);assert.equal(s.videoCalls.filter(c=>c.type==='start').length,0);
 });
+test('level changes and paused/model/session preparation preserve selection without resetting playback',async()=>{
+ let level=25;const s=setup({getLevel:()=>level});
+ try{await s.coordinator.prepare(s.track);await s.coordinator.attachVideo();assert.ok(s.audio.some(c=>c.type==='SET_VOCAL_LEVEL'&&c.payload.level===25));const session=s.coordinator.sessionEpoch,epoch=s.coordinator.epoch;
+  await s.coordinator.transport(s.packet('pause',true));level=75;await s.coordinator.setLevel(level);assert.equal(s.audio.at(-1).type,'SET_VOCAL_LEVEL');assert.equal(s.audio.at(-1).payload.level,75);assert.equal(s.coordinator.sessionEpoch,session);assert.equal(s.coordinator.epoch,epoch);
+  await s.coordinator.suspendAi();await s.coordinator.beginAi();assert.equal(s.audio.filter(c=>c.type==='SET_VOCAL_LEVEL').at(-1).payload.level,75);
+  await s.coordinator.prepare(s.track);assert.equal(s.audio.filter(c=>c.type==='SET_VOCAL_LEVEL').at(-1).payload.level,75);
+  for(const bad of [-1,101,NaN,'25'])await assert.rejects(s.coordinator.setLevel(bad));
+ }finally{await s.coordinator.stopSession({restorePosition:false});}
+});
 test('unready worker intent expires without stopping original playback',async context=>{
  context.mock.timers.enable({apis:['setTimeout','setInterval']});const s=setup();s.worker.ready=false;
  try{await s.coordinator.prepare(s.track);await s.coordinator.setRemoval(true);assert.equal(s.coordinator.enabled,true);context.mock.timers.tick(32001);await turn();assert.equal(s.coordinator.enabled,false);assert.equal(s.coordinator.active,true);assert.ok(s.states.at(-1).vocalRemoverError);}

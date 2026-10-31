@@ -11,20 +11,20 @@ function initialState(profile) {
     searchVersion: 'karaoke', currentVersionType: 'karaoke', currentQueueItemId: null,
     vocalRemoverEligible: false, vocalRemoverReady: false,
     vocalRemoverEnabled:false,vocalRemoverStatus:'unavailable',vocalRemoverError:null,
-    vocalModelId:profile.id,vocalRemoverDelayMs:profile.delayMs,vocalResumePending:false,
+    vocalModelId:profile.id,vocalRemoverDelayMs:profile.delayMs,vocalResumePending:false,vocalLevel:0,vocalLevelRevision:0,
     inputRms: 0, outputRms: 0, peakHz: 0,
   };
 }
 class DesktopAudioController {
   constructor({ sendAudio, setPlaybackRate, publish, setVocal=async enabled=>{if(enabled)throw new Error('ระบบ AI ยังไม่พร้อม');},selectVocalModel=()=>{throw new Error('Model selection unavailable');},initialModelId='fast', timeoutMs = 10000,
-    supportsContinuousVocal=false,preparePlayback=null,closePlayback=async()=>{},suspendVocal=async()=>{} }) {
+    supportsContinuousVocal=false,preparePlayback=null,closePlayback=async()=>{},suspendVocal=async()=>{},setVocalLevel=async()=>{} }) {
     this.sendAudio = sendAudio; this.setPlaybackRate = setPlaybackRate; this.publish = publish;
     this.setVocal=setVocal;
     this.selectVocalModel=selectVocalModel;
     this.timeoutMs = timeoutMs; this.state = initialState(getVocalModel(initialModelId)); this.generation = 0;
     this.modelSelectionGeneration=0;this.requestedModelId=initialModelId;this.modelSwitchIntent=false;this.pendingVocalResume=null;
     this.queue = Promise.resolve();
-    Object.assign(this,{preparePlayback,closePlayback,suspendVocal});this.userStoppedAudio=false;this.userStopSerial=0;
+    Object.assign(this,{preparePlayback,closePlayback,suspendVocal,setVocalLevel});this.userStoppedAudio=false;this.userStopSerial=0;
     if(supportsContinuousVocal)this.state.supportsContinuousVocal=true;
   }
   update(patch) { this.state = { ...this.state, ...patch }; this.publish(this.state); }
@@ -159,6 +159,10 @@ class DesktopAudioController {
         await this.apply('TRACK_CHANGED',payload,context);
         await this.prepareCurrentPlayback();return;
       case 'SET_SEARCH_VERSION': this.update({ searchVersion: payload.version }); return;
+      case 'SET_VOCAL_LEVEL':
+        if(this.active&&this.state.vocalBufferActive)await this.setVocalLevel(payload.level);
+        if(context.generation!==this.generation)return;
+        this.update({vocalLevel:payload.level,vocalLevelRevision:this.state.vocalLevelRevision+1});return;
       case 'SET_VOCAL_MODEL': {
         if(context.modelSelection!==this.modelSelectionGeneration)return;
         const profile=getVocalModel(payload.modelId);
