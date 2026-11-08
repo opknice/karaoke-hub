@@ -52,16 +52,9 @@
 .button:disabled { opacity: .35; cursor: not-allowed; }
 .button[aria-pressed='true'], .button[aria-expanded='true'] { color: #a5f3fc; background: #164e6380; }
 
-.versionSwitch {
-  position: absolute;
-  top: var(--player-safe-top, 12px);
-  left: var(--player-safe-left, 12px);
-  z-index: 60;
-}
-
 .searchPanel { padding-top: var(--player-search-top, 80px); }
 .stage .idleSearch { padding-top: var(--player-search-top); }
-.openSearch { top: var(--player-search-top, 80px); left: var(--player-safe-left, 12px); }
+.openSearch { top: var(--player-safe-top, 12px); left: var(--player-safe-left, 12px); }
 .message {
   position: absolute;
   bottom: max(12px, env(safe-area-inset-bottom, 0px));

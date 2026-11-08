@@ -107,7 +107,7 @@ export const PlayerSearchOverlay = forwardRef<PlayerSearchOverlayHandle, PlayerS
   onAdjustTempo,
   onTempoShortcut,
 }, ref) {
-  const {version: videoVersion, setVersion: setVideoVersion, desktop} = usePlayerSearchVersion();
+  const {version: videoVersion} = usePlayerSearchVersion();
   const videoVersionRef = useRef(videoVersion);
   const {
     activeRoom,
@@ -796,9 +796,6 @@ export const PlayerSearchOverlay = forwardRef<PlayerSearchOverlayHandle, PlayerS
           ค้นหาเพลง
         </button>
       )}
-      {!desktop && <div className={`${controlsStyles.versionSwitch} flex gap-1 rounded-xl border border-white/15 bg-zinc-950/95 p-1`} role="group" aria-label="ประเภทเพลง">
-        {(['karaoke','mv'] as const).map(version => <button key={version} type="button" aria-pressed={videoVersion===version} onClick={()=>setVideoVersion(version)} className={`rounded-lg px-3 py-2 text-xs font-bold ${videoVersion===version?'bg-cyan-700 text-white':'text-zinc-300 hover:bg-white/10'}`}>{version==='mv'?'MV / เพลงปกติ':'Karaoke'}</button>)}
-      </div>}
       <section
         className={
           isIdleGuideVisible ? `${idleStyles.screen} ${controlsStyles.idleSearch}` : isOpen
