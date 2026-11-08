@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import type { YouTubeVideo } from './types';
 import { isYouTubeVideo } from './youtube-video-validation';
 import { catalogRest } from './supabase/catalog-rest';
+import { getYouTubeApiKeys, keyBudgetConfig } from './youtube-api-keys';
 
 const DAY_SECONDS = 86_400;
 
@@ -46,8 +47,10 @@ function dailyLimit(): number {
 }
 
 export async function getSearchBudget(): Promise<SearchBudget> {
-  const value = await catalogRest('rpc/karaoke_search_get_budget', {
-    method: 'POST', body: JSON.stringify({ p_daily_limit: dailyLimit() }),
+  const keys = getYouTubeApiKeys();
+  const pool = keys.length > 1;
+  const value = await catalogRest(pool ? 'rpc/karaoke_youtube_get_budget' : 'rpc/karaoke_search_get_budget', {
+    method: 'POST', body: JSON.stringify(pool ? { p_keys: keyBudgetConfig(keys) } : { p_daily_limit: dailyLimit() }),
   });
   if (!record(value)
     || typeof value.used !== 'number'
@@ -110,9 +113,11 @@ function reservationMessage(reason: string | undefined): string {
 }
 
 export async function reserveSearch(query: string, client: string): Promise<string> {
-  const value = await catalogRest('rpc/karaoke_search_reserve', {
+  const pool = getYouTubeApiKeys().length > 1;
+  const value = await catalogRest(pool ? 'rpc/karaoke_search_pool_begin' : 'rpc/karaoke_search_reserve', {
     method: 'POST',
-    body: JSON.stringify({ p_query: query, p_client: client, p_daily_limit: dailyLimit() }),
+    body: JSON.stringify(pool ? { p_query: query, p_client: client }
+      : { p_query: query, p_client: client, p_daily_limit: dailyLimit() }),
   });
   const reservation = record(value) ? value as unknown as SearchReservation : undefined;
   if (!reservation?.ok || typeof reservation.token !== 'string') {

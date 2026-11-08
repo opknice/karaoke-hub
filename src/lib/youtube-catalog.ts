@@ -13,6 +13,7 @@ import {
 } from './youtube-ranking';
 import { isYouTubeVideo } from './youtube-video-validation';
 import { videosFromDetailsPayload } from './youtube';
+import { requestYouTubeApi } from './youtube-api-request';
 import type { YouTubeVideo } from './types';
 
 const HOUR = 3_600_000;
@@ -242,14 +243,10 @@ export async function saveCatalogVideos(videos: readonly YouTubeVideo[]): Promis
 async function youtubeCatalogRequest(endpoint: 'channels' | 'playlistItems' | 'search' | 'videos', params: Record<string, string>): Promise<Record<string, unknown>> {
   const apiKey = process.env.YOUTUBE_API_KEY;
   if (!apiKey) throw new Error('ยังไม่ได้ตั้งค่า YouTube API Key');
-  const reserved = await catalogRest('rpc/karaoke_catalog_reserve', { method: 'POST', body: '{}' });
-  if (reserved !== true) throw new Error('ครบงบอัปเดตคลังเพลง 2,000 คำขอต่อวันแล้ว ยังค้นในคลังได้');
   const url = new URL(`https://www.googleapis.com/youtube/v3/${endpoint}`);
   for (const [name, value] of Object.entries(params)) url.searchParams.set(name, value);
   url.searchParams.set('key', apiKey);
-  let response: Response;
-  try { response = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(15_000) }); }
-  catch { throw new Error('เชื่อมต่อ YouTube เพื่ออัปเดตคลังไม่สำเร็จ'); }
+  const response = await requestYouTubeApi(url, { catalog: true });
   if (!response.ok) throw new Error(`YouTube ปฏิเสธการอัปเดตคลัง (HTTP ${response.status})`);
   const value: unknown = await response.json();
   if (!record(value) || !Array.isArray(value.items)) throw new Error('ข้อมูลอัปเดตคลังจาก YouTube ไม่ถูกต้อง');

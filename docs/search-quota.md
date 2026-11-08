@@ -54,6 +54,41 @@ The client cookie is a convenience throttle, not strong abuse protection. A publ
 
 YouTube URLs and explicit video IDs such as `id:DmftZuj-8vI` preserve case and use `videos.list`, whose quota is separate. Bare 11-letter song names remain ordinary queries. Cache matching preserves the search text except trimming, whitespace normalization, and case-folding for ordinary queries. Similar-title suggestions do not suppress an explicitly submitted remote search for a different query.
 
+## Optional automatic API key failover
+
+Apply `supabase/migrations/20261108042641_youtube_key_failover.sql` before
+enabling `YOUTUBE_API_KEY_BACKUP`. Keep `YOUTUBE_API_KEY` as the primary and
+configure a distinct backup from the other Google Cloud project. Both values
+are server-only environment variables. Restart or redeploy after configuration.
+
+With two distinct keys, `YOUTUBE_SEARCH_DAILY_LIMIT` applies to the primary and
+`YOUTUBE_SEARCH_BACKUP_DAILY_LIMIT` applies to the backup (100 each by default).
+Each outbound `search.list` attempt is reserved atomically before sending it,
+including unsuccessful attempts and a backup retry. The UI aggregates these
+app counters; it does not report Google's actual remaining quota. Existing
+single-key deployments retain their original budget behavior.
+
+When a key's search budget is spent, use the next eligible key. A structured
+daily-quota error marks only that key and quota bucket unavailable, then retries
+the same request once on the other key. All workers read the shared Supabase
+state. Search exhaustion does not disable `videos`, `channels`, or
+`playlistItems`; these endpoints use the separate general quota bucket. The
+existing catalog maintenance cap remains unchanged.
+
+Exhaustion expires with the Pacific calendar date. The next actual request on
+the new day prefers the primary without a timer or extra probe. A response
+arriving after midnight marks its original reservation day, preserving the new
+day's availability. Rate limits, invalid credentials, permission errors,
+network failures, and unrelated HTTP 403 errors do not rotate keys. If both
+keys are exhausted, new remote requests stop; catalog/cached results remain
+available, and video links require available general quota.
+
+Enabling the pool mid-day imports the legacy primary search count and outage
+state. It does not copy them to the backup. Query leases and the three-second
+client cooldown apply once to the logical search, so a backup retry does not
+collide with its own lease. The database contains fingerprints rather than
+key values; the new table and RPCs are accessible only to `service_role`.
+
 ## Verification
 
 `node --test tests/youtube-search.test.cjs` runs with mocked Supabase and Google responses; it spends no real YouTube quota. TypeScript, ESLint, and `npm run build` validate the application integration.

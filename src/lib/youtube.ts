@@ -5,6 +5,7 @@ import { searchSeedVideos, SEED_KARAOKE_VIDEOS } from './karaoke-seed';
 import { rankKaraokeVideos } from './youtube-ranking';
 import { isKaraokeTitle } from './video-version';
 import { readStoredSearch, writeStoredSearch, reserveSearch, releaseSearch, markUpstreamQuotaExhausted, musicVideoSearchKey, karaokeSearchKey, SearchBudgetError } from './youtube-search-store';
+import { requestYouTubeApi, isYouTubeDailyQuotaError, YouTubeQuotaError } from './youtube-api-request';
 
 const VIDEO_DETAILS_CACHE_TTL_MS = 60 * 60 * 1000;
 const SEARCH_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -77,12 +78,6 @@ function getRecord(
 ): Record<string, unknown> | undefined {
   const value = record[key];
   return isRecord(value) ? value : undefined;
-}
-
-function getYouTubeApiErrorMessage(payload: unknown): string | undefined {
-  if (!isRecord(payload)) return undefined;
-  const error = getRecord(payload, 'error');
-  return error ? getString(error, 'message') : undefined;
 }
 
 function cacheSearchResults(
@@ -275,7 +270,8 @@ function chunkVideoIds(videoIds: readonly string[]): string[][] {
 
 async function getVideoDetails(
   videoIds: readonly string[],
-  apiKey: string
+  apiKey: string,
+  requireDetails = false,
 ): Promise<Map<string, YouTubeVideoDetails | null>> {
   const now = Date.now();
   const uniqueIds = [...new Set(videoIds)];
@@ -298,7 +294,7 @@ async function getVideoDetails(
     detailsUrl.searchParams.set('key', apiKey);
 
     try {
-      const response = await fetch(detailsUrl.toString(), { cache: 'no-store', signal: AbortSignal.timeout(15_000) });
+      const response = await requestYouTubeApi(detailsUrl);
       if (!response.ok) {
         console.warn(`YouTube video details API error ${response.status}`);
         continue;
@@ -319,6 +315,12 @@ async function getVideoDetails(
         videoDetailsCache.set(videoId, { timestamp: now, details: null });
       }
     } catch (error: unknown) {
+      if (error instanceof YouTubeQuotaError) {
+        if (requireDetails) throw new YouTubeSearchError(error.message, error.status);
+        // Enrichment is optional: retain cached candidates and any details
+        // already refreshed by earlier chunks when general quota runs out.
+        break;
+      }
       console.warn('Unable to refresh YouTube video details:', error);
     }
   }
@@ -432,25 +434,18 @@ async function fetchYouTubeSearch(
 
   let response: Response;
   try {
-    response = await fetch(searchUrl.toString(), { cache: 'no-store', signal: AbortSignal.timeout(15_000) });
+    response = await requestYouTubeApi(searchUrl);
   } catch (error: unknown) {
+    if (error instanceof YouTubeQuotaError) throw new YouTubeSearchError(error.message, error.status);
     console.warn('Unable to search YouTube:', error);
     throw new YouTubeSearchError('เชื่อมต่อ YouTube ไม่สำเร็จ กรุณาลองใหม่', 502);
   }
 
   if (!response.ok) {
     const payload: unknown = await response.json().catch(() => undefined);
-    const upstreamMessage = getYouTubeApiErrorMessage(payload);
-    console.warn(
-      `YouTube search API error ${response.status}`,
-      upstreamMessage ?? 'No error message returned'
-    );
+    console.warn(`YouTube search API error ${response.status}`);
 
-    const isDailyQuotaExhausted =
-      (response.status === 429 || response.status === 403) &&
-      /per day|daily|exceeded your.*quota/iu.test(upstreamMessage ?? '');
-
-    if (isDailyQuotaExhausted) {
+    if (isYouTubeDailyQuotaError(response.status, payload)) {
       await markUpstreamQuotaExhausted();
       throw new YouTubeSearchError(
         SEARCH_QUOTA_EXHAUSTED_MESSAGE,
@@ -495,7 +490,7 @@ async function performKaraokeSearch(normalizedQuery: string, client: string): Pr
     throw new YouTubeSearchError('ยังไม่ได้ตั้งค่า YouTube API Key สำหรับตรวจสอบลิงก์วิดีโอ', 503);
   }
   if (videoId && apiKey) {
-    const details = (await getVideoDetails([videoId], apiKey)).get(videoId);
+    const details = (await getVideoDetails([videoId], apiKey, true)).get(videoId);
     if (details === undefined) throw new YouTubeSearchError('ดึงรายละเอียดวิดีโอไม่สำเร็จ กรุณาลองใหม่', 502);
     if (!details || !details.embeddable) throw new YouTubeSearchError('วิดีโอนี้ไม่พร้อมเล่นแบบฝัง', 422);
     return applyLiveDetails(createSearchVideos([{ videoId, title: details.title, channelId: details.channelId,
@@ -599,7 +594,7 @@ export async function searchMusicVideos(query: string, client = 'local'): Promis
     if (!apiKey) throw new YouTubeSearchError('ยังไม่ได้ตั้งค่า YouTube API Key สำหรับค้นหา MV', 503);
     if (!videoId && /^(?:https?:\/\/|id:)/i.test(trimmed)) throw new YouTubeSearchError('กรุณาวางลิงก์วิดีโอ YouTube ที่ถูกต้อง', 400);
     if (videoId) {
-      const details = await getVideoDetails([videoId], apiKey);
+      const details = await getVideoDetails([videoId], apiKey, true);
       const value = details.get(videoId);
       if (value === undefined) throw new YouTubeSearchError('ตรวจสอบวิดีโอไม่สำเร็จ กรุณาลองใหม่', 502);
       if (!value || !value.embeddable) throw new YouTubeSearchError('วิดีโอนี้ไม่พร้อมเล่นแบบฝัง', 422);
