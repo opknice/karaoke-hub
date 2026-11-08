@@ -8,7 +8,7 @@ import {
   useState,
 } from 'react';
 import Image from 'next/image';
-import { Check, Gauge, ListMusic, Loader2, Music2, Search, Volume2 } from 'lucide-react';
+import { Check, Gauge, ListMusic, Loader2, Music2, Search, Volume2, X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { usePlayerSearchVersion } from '@/hooks/usePlayerSearchVersion';
 import { getVideoVersion } from '@/lib/video-version';
@@ -26,6 +26,7 @@ import {
   getPlayerVolumeShortcut,
   isPlayerAutoLevelShortcut,
   isPlayerVocalCutShortcut,
+  isVirtualKeyboardDevice,
 } from '@/lib/player-keyboard';
 import {
   rankKaraokeVideos,
@@ -120,6 +121,7 @@ export function PlayerSearchOverlay({
   const lyricsUiActiveRef = useRef(false);
 
   const [query, setQuery] = useState('');
+  const [isSearchExplicitlyOpen, setIsSearchExplicitlyOpen] = useState(false);
   const [showPopular, setShowPopular] = useState(false);
   const [isQueueBrowserOpen, setIsQueueBrowserOpen] = useState(false);
   const [selectedQueueItemId, setSelectedQueueItemId] = useState<string | null>(null);
@@ -160,7 +162,7 @@ export function PlayerSearchOverlay({
   const catalogError = useCatalogPreview(query, videoVersion === 'karaoke' && localCatalog.initialized && status === 'idle' && localCatalog.mode === 'supabase', receivePreview);
 
   const trimmedQuery = query.trim();
-  const isOpen = query.length > 0 || showPopular || showLyricsInput || localCatalog.panelOpen || localCatalog.busy === 'downloading';
+  const isOpen = isSearchExplicitlyOpen || query.length > 0 || showPopular || showLyricsInput || localCatalog.panelOpen || localCatalog.busy === 'downloading';
   const isQueueBrowserActive = isQueueBrowserOpen && !isOpen;
   const isIdleGuideVisible = !nowPlaying && !isOpen && !isQueueBrowserActive;
   const isYoutubeSearchLoading = status === 'loading' && searchSource === 'youtube';
@@ -183,14 +185,20 @@ export function PlayerSearchOverlay({
   }, [isQueueBrowserActive, onQueueBrowserActiveChange]);
 
   const focusSearchInput = useCallback(() => {
+    if (isVirtualKeyboardDevice()) return;
     if (lyricsUiActiveRef.current || document.querySelector('[role="dialog"][aria-modal="true"]')) return;
     inputRef.current?.focus({ preventScroll: true });
   }, []);
 
   const closeSearch = useCallback(() => {
     requestRef.current?.abort();
+    if (isVirtualKeyboardDevice()) {
+      inputRef.current?.blur();
+      lyricsInputRef.current?.blur();
+    }
     queryRef.current = '';
     setQuery('');
+    setIsSearchExplicitlyOpen(false);
     setShowPopular(false);
     setLocalPanelOpen(false);
     setIsQueueBrowserOpen(false);
@@ -334,6 +342,7 @@ export function PlayerSearchOverlay({
   }, [isQueueBrowserOpen, openQueueBrowser, queue, selectedQueueItem?.id]);
 
   const closeQueueBrowser = useCallback(() => {
+    if (isVirtualKeyboardDevice()) inputRef.current?.blur();
     setIsQueueBrowserOpen(false);
     setSelectedQueueItemId(null);
     window.requestAnimationFrame(focusSearchInput);
@@ -405,6 +414,7 @@ export function PlayerSearchOverlay({
   );
 
   useEffect(() => {
+    if (isVirtualKeyboardDevice()) return;
     focusSearchInput();
 
     const recaptureFocusFromPlayer = () => {
@@ -613,7 +623,11 @@ export function PlayerSearchOverlay({
     ) {
       // Focus synchronously so the browser delivers the key's text input to the
       // real field. This preserves Thai IME behavior without copying characters.
-      focusSearchInput();
+      // An actual key press also expresses intent on touch laptops / Android TVs;
+      // only passive mount, pointer and blur recapture is disabled there.
+      if (!lyricsUiActiveRef.current && !document.querySelector('[role="dialog"][aria-modal="true"]')) {
+        inputRef.current?.focus({ preventScroll: true });
+      }
       return;
     }
 
@@ -709,7 +723,6 @@ export function PlayerSearchOverlay({
     activateQueueItem,
     closeQueueBrowser,
     closeSearch,
-    focusSearchInput,
     isOpen,
     isLyricsModalOpen,
     isQueueBrowserOpen,
@@ -739,6 +752,19 @@ export function PlayerSearchOverlay({
 
   return (
     <>
+      {nowPlaying && !isOpen && !isQueueBrowserActive && (
+        <button
+          type="button"
+          aria-label="เปิดค้นหาเพลง"
+          aria-controls="player-search-input"
+          aria-expanded={false}
+          onClick={() => setIsSearchExplicitlyOpen(true)}
+          className="fixed left-4 top-16 z-50 flex min-h-11 items-center gap-2 rounded-xl border border-violet-300/40 bg-zinc-950/90 px-4 py-2 text-sm font-semibold text-white shadow-lg hover:bg-violet-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
+        >
+          <Search className="h-4 w-4" aria-hidden="true" />
+          ค้นหาเพลง
+        </button>
+      )}
       {!desktop && <div className="absolute left-4 top-4 z-[60] flex gap-1 rounded-xl border border-white/15 bg-zinc-950/95 p-1" role="group" aria-label="ประเภทเพลง">
         {(['karaoke','mv'] as const).map(version => <button key={version} type="button" aria-pressed={videoVersion===version} onClick={()=>setVideoVersion(version)} className={`rounded-lg px-3 py-2 text-xs font-bold ${videoVersion===version?'bg-cyan-700 text-white':'text-zinc-300 hover:bg-white/10'}`}>{version==='mv'?'MV / เพลงปกติ':'Karaoke'}</button>)}
       </div>}
@@ -760,6 +786,7 @@ export function PlayerSearchOverlay({
               <Search className="h-5 w-5 shrink-0 text-violet-300" aria-hidden="true" />
               <input
                 ref={inputRef}
+                id="player-search-input"
                 type="text"
                 role="combobox"
                 value={query}
@@ -777,6 +804,16 @@ export function PlayerSearchOverlay({
                 aria-controls={isQueueBrowserActive ? 'player-queue-results' : 'player-search-results'}
                 aria-activedescendant={activeDescendantId}
               />
+              {query.length > 0 && (
+                <button
+                  type="button"
+                  aria-label="ล้างและปิดค้นหา"
+                  onClick={closeSearch}
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-zinc-300 hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
+                >
+                  <X className="h-5 w-5" aria-hidden="true" />
+                </button>
+              )}
               <button hidden type="button" aria-label="สลับการเรียงตามชื่อเพลงหรือศิลปิน" onClick={() => {
                 const nextMode = mode === 'song' ? 'artist' : 'song';
                 searchModeRef.current = nextMode;
@@ -860,6 +897,15 @@ export function PlayerSearchOverlay({
 
             {isOpen && (
               <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-white/10 pt-3 text-[11px] text-zinc-400 sm:text-xs">
+                <button
+                  type="button"
+                  aria-label="ปิดค้นหา"
+                  onClick={closeSearch}
+                  className="ml-auto flex min-h-11 items-center gap-1 rounded-lg border border-white/20 px-3 py-2 text-sm text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
+                >
+                  <X className="h-4 w-4" aria-hidden="true" />
+                  ปิดค้นหา
+                </button>
                 <span>↑↓ เลือกเพลง</span>
                 <span>{selectedIndex >= 0 && results.length ? 'Enter เพิ่มเพลงที่เลือกเข้าคิว' : 'Enter ค้นหาเพลง'}</span>
                 <span>Tab เลื่อนไปปุ่มต่าง ๆ</span>
@@ -909,7 +955,7 @@ export function PlayerSearchOverlay({
                       minLength={MIN_SEARCH_LENGTH}
                       maxLength={160}
                       placeholder="พิมพ์ท่อนเนื้อเพลงที่จำได้"
-                      autoFocus
+                      autoFocus={!isVirtualKeyboardDevice()}
                       className="min-w-[14rem] flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm font-normal text-white placeholder:text-zinc-500 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/20"
                     />
                     <button

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Script from 'next/script';
 import { ExternalLink, Loader2, Search, X } from 'lucide-react';
+import { isVirtualKeyboardDevice } from '@/lib/player-keyboard';
 
 type ProgrammableSearchElement = {
   execute: (query: string) => void;
@@ -57,7 +58,8 @@ export function LyricsGoogleSearchModal({ open, query, onClose }: LyricsGoogleSe
     return () => {
       document.body.style.overflow = previousOverflow;
       document.removeEventListener('keydown', handleKeyDown);
-      previousFocus?.focus();
+      const restoresTextInput = previousFocus?.matches('input, textarea, [role="textbox"], [contenteditable]:not([contenteditable="false"])');
+      if (!isVirtualKeyboardDevice() || !restoresTextInput) previousFocus?.focus();
     };
   }, [mounted, open, onClose]);
 
@@ -109,7 +111,7 @@ export function LyricsGoogleSearchModal({ open, query, onClose }: LyricsGoogleSe
   return createPortal(
     <div
       role="dialog"
-      aria-modal="true"
+      aria-modal={open}
       aria-labelledby="lyrics-search-title"
       aria-hidden={!open}
       className={`${open ? 'flex' : 'hidden'} fixed inset-0 z-[60] items-center justify-center bg-black/80 p-3 backdrop-blur-md sm:p-6`}

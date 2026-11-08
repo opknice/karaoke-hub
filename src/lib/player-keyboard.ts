@@ -1,6 +1,18 @@
 export type PlayerVolumeShortcut = 'increase' | 'decrease';
 export type PlayerTempoShortcut = 'increase' | 'decrease';
 
+export function isVirtualKeyboardDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  const deviceNavigator = window.navigator;
+  const touchPoints = deviceNavigator?.maxTouchPoints ?? 0;
+  const hasTouch = touchPoints > 0 || 'ontouchstart' in window;
+  const coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+  const cannotHover = window.matchMedia?.('(hover: none)').matches ?? false;
+  const mobileUserAgent = /Android|iPhone|iPad|iPod|Mobile/i.test(deviceNavigator?.userAgent ?? '');
+  const desktopModeIPad = deviceNavigator?.platform === 'MacIntel' && touchPoints > 1;
+  return coarsePointer || (cannotHover && hasTouch) || mobileUserAgent || desktopModeIPad;
+}
+
 type PlayerShortcutEvent = Pick<
   KeyboardEvent,
   'altKey' | 'code' | 'ctrlKey' | 'key' | 'metaKey' | 'shiftKey'

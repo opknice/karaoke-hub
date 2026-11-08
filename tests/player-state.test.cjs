@@ -6,7 +6,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
 
-function loadTypeScriptModule(file) {
+function loadTypeScriptModule(file, browser = {}) {
   const modules = new Map();
 
   function load(target) {
@@ -21,7 +21,7 @@ function loadTypeScriptModule(file) {
     const localRequire = (name) => name.startsWith('.')
       ? load(path.resolve(path.dirname(absolute), `${name}.ts`))
       : require(name);
-    vm.runInThisContext(`(function(require,module,exports){${code}\n})`, { filename: absolute })(localRequire, module, module.exports);
+    vm.runInThisContext(`(function(require,module,exports,window,navigator){${code}\n})`, { filename: absolute })(localRequire, module, module.exports, browser.window, browser.navigator);
     return module.exports;
   }
 
@@ -118,4 +118,26 @@ test('player keyboard shortcuts recognize Windows key values and adjust one perc
   assert.equal(shouldMutePlayer(0, false), true, 'zero volume must be a real mute');
   assert.equal(shouldMutePlayer(1, false), false, 'raising zero to one restores sound');
   assert.equal(shouldMutePlayer(85, true), true, 'explicit mute stays authoritative');
+});
+
+test('virtual keyboard detection is SSR-safe and distinguishes mobile from desktop/hybrid input', () => {
+  const ssr = loadTypeScriptModule('src/lib/player-keyboard.ts');
+  assert.equal(ssr.isVirtualKeyboardDevice(), false);
+  for (const entry of [
+    { name: 'desktop mouse', coarse: false, hoverNone: false, touch: 0, expected: false },
+    { name: 'touch laptop with mouse', coarse: false, hoverNone: false, touch: 10, expected: false },
+    { name: 'coarse primary pointer', coarse: true, hoverNone: false, touch: 0, expected: true },
+    { name: 'touch with no hover', coarse: false, hoverNone: true, touch: 5, expected: true },
+    { name: 'no hover without touch', coarse: false, hoverNone: true, touch: 0, expected: false },
+    { name: 'iPhone UA fallback', noMedia: true, ua: 'iPhone OS 18_0', expected: true },
+    { name: 'Android UA fallback', noMedia: true, ua: 'Linux; Android 15; Mobile', expected: true },
+    { name: 'iPad desktop UA', coarse: false, hoverNone: false, touch: 5, platform: 'MacIntel', ua: 'Macintosh', expected: true },
+    { name: 'touch event fallback', coarse: false, hoverNone: true, touchEvent: true, expected: true },
+  ]) {
+    const navigator = { maxTouchPoints: entry.touch ?? 0, userAgent: entry.ua ?? 'Windows NT 10.0', platform: entry.platform ?? 'Win32' };
+    const window = { navigator, ...(entry.touchEvent ? { ontouchstart: null } : {}) };
+    if (!entry.noMedia) window.matchMedia = query => ({ matches: query === '(pointer: coarse)' ? entry.coarse : entry.hoverNone });
+    const api = loadTypeScriptModule('src/lib/player-keyboard.ts', { window, navigator });
+    assert.equal(api.isVirtualKeyboardDevice(), entry.expected, entry.name);
+  }
 });
