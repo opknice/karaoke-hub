@@ -34,7 +34,9 @@
 .ready::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #f472b6; box-shadow: 0 0 16px #f472b655; }
 .welcome h1 { margin: 14px 0 18px; font-size: clamp(38px, 4.7vw, 76px); line-height: 1.22; font-weight: 800; letter-spacing: -.035em; }
 .welcome h1 span { color: #f0abfc; }
-.lead { color: #c4bdd0; font-size: clamp(14px, 1.35vw, 20px); line-height: 1.8; }
+.copyrightNotice { padding: 14px 16px; border: 1px solid #ffffff1f; border-radius: 14px; background: #ffffff05; color: #c4bdd0; font-size: 13px; line-height: 1.9; overflow-wrap: anywhere; }
+.copyrightTitle { margin: 0 0 10px; color: #f0abfc; font-size: 14px; font-weight: 700; line-height: 1.7; }
+.copyrightNotice p + p { margin-top: 10px; }
 .search { grid-column: 1; grid-row: 2; align-self: start; min-width: 0; }
 .search > div:first-child { padding: clamp(16px, 2vw, 28px); border: 1px solid #67e8f944; background: linear-gradient(125deg, #152631, #191222); backdrop-filter: none; border-radius: 24px; }
 .keyboardHeading h2 { display: flex; align-items: center; gap: 10px; color: #a5f3fc; font-size: clamp(18px, 1.8vw, 27px); font-weight: 700; }
@@ -100,7 +102,7 @@
 .discovery button:focus-visible { outline:2px solid #67e8f9; outline-offset:3px; }
 .discovery svg { width:16px; height:16px; }
 @media (max-width:1100px) and (min-width:851px) { .hero { flex-wrap:wrap; } .heroCopy { flex-basis:100%; } .micStage { flex-basis:150px; height:200px; margin:auto; } .heroMic { height:145px; } }
-@media (max-width:480px) { .micStage { flex-basis:24%; height:180px; } .heroMic { width:85px; height:125px; } .micCaption { display:none; } .hero h1 { font-size:40px; } .ready { font-size:10px; } .hero .lead { font-size:13px; } .roomStats .invitation { width:100%; } }
+@media (max-width:480px) { .micStage { flex-basis:24%; height:180px; } .heroMic { width:85px; height:125px; } .micCaption { display:none; } .hero h1 { font-size:40px; } .ready { font-size:10px; } .roomStats .invitation { width:100%; } }
 @media (max-width: 850px) {
   .layout { grid-template-columns: minmax(0, 1fr); max-width: 600px; gap: 28px; }
   .room { grid-column: 1; grid-row: 3; }

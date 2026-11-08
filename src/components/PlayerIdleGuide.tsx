@@ -10,7 +10,11 @@ export function PlayerIdleWelcome({ memberCount, queueCount }: { memberCount: nu
         <div className={styles.heroCopy}>
           <p className={styles.ready}>YOUR STAGE. YOUR SONG.</p>
           <h1>เวทีนี้<br /><span>รอเสียงคุณ</span></h1>
-          <p className={styles.lead}>เพลงที่ชอบ เสียงที่ใช่ คืนนี้คุณเลือกเอง<br />คีย์เพลงตรงนี้ หรือสแกนจากที่นั่งได้เลย</p>
+          <section className={styles.copyrightNotice} aria-labelledby="player-copyright-title">
+            <h2 id="player-copyright-title" className={styles.copyrightTitle}>ประกาศลิขสิทธิ์และเงื่อนไขการใช้งาน</h2>
+            <p>ซอฟต์แวร์นี้พัฒนาขึ้นเพื่อแจกจ่ายให้ใช้งานฟรี ห้ามมิให้ผู้ใดนำไปจำหน่าย แลกเปลี่ยน หรือใช้เพื่อแสวงหาผลกำไรในเชิงพาณิชย์โดยไม่ได้รับอนุญาตจากผู้พัฒนา</p>
+            <p>ทั้งนี้ ตัวโปรแกรมทำหน้าที่เป็นเพียงเครื่องมือเล่นสื่อเท่านั้น ผู้พัฒนาไม่มีส่วนเกี่ยวข้องและไม่รับผิดชอบต่อการละเมิดลิขสิทธิ์ไฟล์เพลงหรือเนื้อหาใดๆ ที่ผู้ใช้งานนำมาเปิดผ่านโปรแกรมนี้</p>
+          </section>
         </div>
         <div className={styles.micStage} aria-hidden="true">
           <div className={styles.spotlight} />
