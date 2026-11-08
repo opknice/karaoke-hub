@@ -15,6 +15,7 @@ const video = { id: 'one', youtube_video_id: 'DmftZuj-8vI', title: 'สิ่ง
 async function environment(t, { mobile = true, playing = false } = {}) {
   const windowListeners = new Map(), documentListeners = new Map(), tasks = new Map();
   let timer = 0;
+  let receiveCatalogPreview;
   const state = { focus: 0, blur: 0, added: 0, played: 0, restarted: 0, skipped: 0, volume: 50 };
   const document = { activeElement: null, body: { style: { overflow: 'auto' } },
     querySelector: () => null, hasFocus: () => true, getElementById: () => null,
@@ -44,7 +45,7 @@ async function environment(t, { mobile = true, playing = false } = {}) {
   const mainInput = new Element('INPUT');
   const context = { activeRoom: null, nowPlaying: playing ? { id: 'playing', video } : null,
     queue: [{ id: 'queued', video, singers: [], requested_by: 'Host' }], roomMembers: [], volume: 50,
-    addToQueue: async () => { state.added++; return { status: 'queued' }; },
+    addToQueue: async video => { state.added++; state.addedVideo = video; return { status: 'queued' }; },
     playQueueItem: async () => { state.played++; }, skipSong: async () => { state.skipped++; },
     setVolume: value => { state.volume = value; }, setIsMuted: noop,
   };
@@ -55,7 +56,7 @@ async function environment(t, { mobile = true, playing = false } = {}) {
     '@/context/KaraokeContext': { useKaraoke: () => context },
     '@/hooks/usePlayerSearchVersion': { usePlayerSearchVersion: () => ({ version: 'karaoke', setVersion: noop, desktop: false }) },
     '@/lib/use-local-catalog': { useLocalCatalog: () => localCatalog },
-    '@/lib/use-catalog-preview': { useCatalogPreview: () => '' },
+    '@/lib/use-catalog-preview': { useCatalogPreview: (_query, _enabled, onResults) => { receiveCatalogPreview = onResults; return ''; } },
     '@/lib/youtube-search-client': { getLocalSearchPreview: query => query.trim().length >= 2 ? [video] : [],
       isDirectVideoQuery: () => false, searchPlayerKaraoke: async () => ({ videos: [video], source: 'catalog' }),
       getPopularKaraokeVideos: async () => ({ videos: [video] }) },
@@ -116,6 +117,8 @@ async function environment(t, { mobile = true, playing = false } = {}) {
       return () => h.setModalOpen(false);
     },
     async type(value) { await act(async () => renderer.root.findByProps({ role: 'combobox' }).props.onChange({ target: { value } })); },
+    async preview(videos) { await act(async () => receiveCatalogPreview(videos)); },
+    async compositionEnd(value) { await act(async () => renderer.root.findByProps({ role: 'combobox' }).props.onCompositionEnd({ currentTarget: { value } })); },
     async key(key, overrides = {}) {
       await act(async () => { windowListeners.get('keydown')?.({ key, code: key, target: document.body,
         altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, repeat: false,
@@ -163,6 +166,39 @@ test('successful mobile song selection dismisses the keyboard and search results
   assert.equal(h.root.findByProps({ role: 'combobox' }).props.value, '');
   assert.notEqual(h.document.activeElement, h.mainInput);
   assert.equal(h.state.focus, focused);
+});
+
+test('Android IME completion preserves catalog suggestions so the tapped song can be added without submitting search', async t => {
+  const h = await environment(t, { playing: true }); await h.mountOverlay();
+  h.mainInput.focus();
+  await h.type('สิ่งสำคัญ');
+  // Live catalog results are not part of the local seed/search-response cache.
+  const suggestion = { ...video, id: 'catalog-only', youtube_video_id: 'abcdefghijk' };
+  await h.preview([suggestion]);
+  const tappedOption = h.root.findByProps({ id: 'player-result-catalog-only' });
+
+  // Android can commit the IME and emit a final input event while focus moves
+  // from the input to the suggestion, before the suggestion receives its click.
+  await h.compositionEnd('สิ่งสำคัญ');
+  await h.type('สิ่งสำคัญ');
+  assert.equal(h.root.findAllByProps({ role: 'option' }).length, 1);
+  const remainingOption = h.root.findAllByProps({ role: 'option' })[0];
+  assert.equal(remainingOption.props.id, 'player-result-catalog-only');
+  assert.equal(remainingOption, tappedOption, 'the tapped DOM option must not be replaced before click');
+  await act(async () => remainingOption.props.onClick());
+  await h.flush();
+  assert.equal(h.state.added, 1);
+  assert.equal(h.state.addedVideo.youtube_video_id, suggestion.youtube_video_id);
+  assert.equal(h.root.findByProps({ role: 'combobox' }).props.value, '');
+  assert.notEqual(h.document.activeElement, h.mainInput);
+});
+
+test('IME completion still applies text that changed since the last input event', async t => {
+  const h = await environment(t); await h.mountOverlay();
+  await h.type('สิ่ง');
+  await h.compositionEnd('สิ่งสำคัญ');
+  assert.equal(h.root.findByProps({ role: 'combobox' }).props.value, 'สิ่งสำคัญ');
+  assert.equal(h.state.added, 0);
 });
 
 test('touch users can reopen search during playback after closing or adding a song', async t => {

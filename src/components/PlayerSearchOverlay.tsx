@@ -257,6 +257,9 @@ export const PlayerSearchOverlay = forwardRef<PlayerSearchOverlayHandle, PlayerS
   }, [focusSearchInput]);
 
   const updateQuery = useCallback((value: string) => {
+    // Android IMEs can commit unchanged text as focus moves to a result.
+    // Keep that result mounted until its click is delivered.
+    if (value === queryRef.current) return;
     requestRef.current?.abort();
     setShowPopular(false);
     queryRef.current = value;
