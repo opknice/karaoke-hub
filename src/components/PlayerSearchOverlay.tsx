@@ -786,17 +786,30 @@ export const PlayerSearchOverlay = forwardRef<PlayerSearchOverlayHandle, PlayerS
 
   return (
     <>
-      {nowPlaying && !isOpen && !isQueueBrowserActive && (
+      {!isOpen && !isQueueBrowserActive && (
         <button
           type="button"
           aria-label="เปิดค้นหาเพลง"
           aria-controls="player-search-input"
           aria-expanded={false}
           onClick={() => setIsSearchExplicitlyOpen(true)}
-          className={`${controlsStyles.openSearch} fixed z-50 flex min-h-11 items-center gap-2 rounded-xl border border-violet-300/40 bg-zinc-950/90 px-4 py-2 text-sm font-semibold text-white shadow-lg hover:bg-violet-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400`}
+          className={`${controlsStyles.searchToggle} fixed z-50 flex min-h-11 items-center gap-2 rounded-xl border border-violet-300/40 bg-zinc-950/90 px-4 py-2 text-sm font-semibold text-white shadow-lg hover:bg-violet-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400`}
         >
           <Search className="h-4 w-4" aria-hidden="true" />
           <span className={controlsStyles.searchLabel}>ค้นหาเพลง</span>
+        </button>
+      )}
+      {isOpen && (
+        <button
+          type="button"
+          aria-label="ปิดค้นหา"
+          aria-controls="player-search-input"
+          aria-expanded={true}
+          onClick={closeSearch}
+          className={`${controlsStyles.searchToggle} fixed z-[60] flex min-h-11 items-center gap-2 rounded-xl border-2 border-red-400 bg-red-950/95 px-4 py-2 text-sm font-semibold text-red-50 shadow-lg shadow-red-950/40 hover:bg-red-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300`}
+        >
+          <X className="h-4 w-4" aria-hidden="true" />
+          <span className={controlsStyles.searchLabel}>ปิดค้นหา</span>
         </button>
       )}
       <section
@@ -928,15 +941,6 @@ export const PlayerSearchOverlay = forwardRef<PlayerSearchOverlayHandle, PlayerS
 
             {isOpen && (
               <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-white/10 pt-3 text-[11px] text-zinc-400 sm:text-xs">
-                <button
-                  type="button"
-                  aria-label="ปิดค้นหา"
-                  onClick={closeSearch}
-                  className="ml-auto flex min-h-11 items-center gap-1 rounded-lg border border-white/20 px-3 py-2 text-sm text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
-                >
-                  <X className="h-4 w-4" aria-hidden="true" />
-                  ปิดค้นหา
-                </button>
                 <span>↑↓ เลือกเพลง</span>
                 <span>{selectedIndex >= 0 && results.length ? 'Enter เพิ่มเพลงที่เลือกเข้าคิว' : 'Enter ค้นหาเพลง'}</span>
                 <span>Tab เลื่อนไปปุ่มต่าง ๆ</span>

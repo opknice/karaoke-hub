@@ -201,6 +201,19 @@ test('IME completion still applies text that changed since the last input event'
   assert.equal(h.state.added, 0);
 });
 
+test('touch users can open and close search from the initial idle screen without opening the keyboard', async t => {
+  const h = await environment(t); await h.mountOverlay(); await h.flush();
+  await act(async () => h.root.findByProps({ 'aria-label': 'เปิดค้นหาเพลง' }).props.onClick());
+  assert.equal(h.root.findByProps({ role: 'combobox' }).props['aria-expanded'], true);
+  assert.equal(h.state.focus, 0);
+  assert.equal(h.root.findAllByProps({ 'aria-label': 'เปิดค้นหาเพลง' }).length, 0);
+  await act(async () => h.root.findByProps({ 'aria-label': 'ปิดค้นหา' }).props.onClick());
+  await h.flush();
+  assert.equal(h.root.findByProps({ 'aria-label': 'เปิดค้นหาเพลง' }).type, 'button');
+  assert.equal(h.root.findByProps({ role: 'combobox' }).props['aria-expanded'], false);
+  assert.equal(h.state.focus, 0);
+});
+
 test('touch users can reopen search during playback after closing or adding a song', async t => {
   const h = await environment(t, { playing: true }); await h.mountOverlay();
   for (const action of ['close', 'select']) {

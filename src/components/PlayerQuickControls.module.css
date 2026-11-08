@@ -54,7 +54,7 @@
 
 .searchPanel { padding-top: var(--player-search-top, 80px); }
 .stage .idleSearch { padding-top: var(--player-search-top); }
-.openSearch { top: calc(var(--player-safe-top, 12px) + 4px); left: var(--player-safe-left, 12px); }
+.searchToggle { top: calc(var(--player-safe-top, 12px) + 4px); left: var(--player-safe-left, 12px); }
 .message {
   position: absolute;
   bottom: max(12px, env(safe-area-inset-bottom, 0px));
@@ -75,13 +75,13 @@
 
 @media (max-width: 639px) {
   .header { gap: 4px; }
-  .stage .openSearch {
+  .stage .searchToggle {
     gap: 4px;
     padding-inline: 8px;
   }
 }
 
 @media (max-width: 374px) {
-  .stage .openSearch { width: 44px; padding-inline: 0; justify-content: center; }
+  .stage .searchToggle { width: 44px; padding-inline: 0; justify-content: center; }
   .searchLabel { display: none; }
 }
