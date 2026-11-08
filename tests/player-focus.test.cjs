@@ -27,6 +27,7 @@ async function environment(t, { mobile = true, playing = false } = {}) {
     blur() { state.blur++; if (document.activeElement === this) document.activeElement = document.body; }
     matches(selector) { return ['INPUT', 'TEXTAREA'].includes(this.tagName) && /input|textarea/.test(selector); }
     closest(selector) {
+      if (this.control && selector.includes('[data-player-controls]')) return this;
       return this.matches(selector) || (this.tagName === 'BUTTON' && selector.includes('button')) ? this : null;
     }
   }
@@ -48,7 +49,7 @@ async function environment(t, { mobile = true, playing = false } = {}) {
     setVolume: value => { state.volume = value; }, setIsMuted: noop,
   };
   const localCatalog = { initialized: true, mode: 'supabase', busy: null, panelOpen: false,
-    search: noop, cancelSearch: noop, setPanelOpen: noop, chooseLocal: noop, chooseSupabase: noop };
+    search: noop, cancelSearch: noop, setPanelOpen: noop, chooseLocal: noop, chooseSupabase: noop, progress: 12 };
   const overrides = {
     '@/context/AuthContext': { useAuth: () => ({ nickname: 'Host' }) },
     '@/context/KaraokeContext': { useKaraoke: () => context },
@@ -64,7 +65,7 @@ async function environment(t, { mobile = true, playing = false } = {}) {
     './LyricsGoogleSearchModal': { LyricsGoogleSearchModal: () => null },
     'next/image': { default: props => React.createElement('img', props) },
     'next/script': { default: () => null },
-    'react-dom': { createPortal: content => content },
+    'react-dom': { createPortal: (content, target) => { state.portalTarget = target; (state.portalTargets ??= []).push(target); return content; } },
   };
   const modules = new Map();
   function load(file) {
@@ -88,29 +89,31 @@ async function environment(t, { mobile = true, playing = false } = {}) {
     return module.exports;
   }
   let renderer;
-  const h = { state, document, window, windowListeners, documentListeners, mainInput, Element, context,
+  const h = { state, document, window, windowListeners, documentListeners, mainInput, Element, context, localCatalog,
     async flush() {
       await act(async () => {
         for (const [id, task] of [...tasks]) if (task.delay === 0) { tasks.delete(id); task.fn(); }
         await Promise.resolve();
       });
     },
-    async mountOverlay() {
+    async mountOverlay(extraProps = {}) {
       const { PlayerSearchOverlay } = load('src/components/PlayerSearchOverlay.tsx');
       await act(async () => { renderer = create(React.createElement(PlayerSearchOverlay, {
         onQueueBrowserActiveChange: noop, onRestartCurrentSong: () => { state.restarted++; },
         onToggleVocalCut: noop, onToggleAutoLevel: noop, onAdjustTempo: noop, onTempoShortcut: noop,
+        ...extraProps,
       }), { createNodeMock: element => element.props.role === 'combobox' ? mainInput : new Element(element.type.toUpperCase()) }); });
       return renderer;
     },
-    async mountModal(previousFocus) {
+    async mountModal(previousFocus, extraProps = {}) {
       document.activeElement = previousFocus;
       const { LyricsGoogleSearchModal } = load('src/components/LyricsGoogleSearchModal.tsx');
-      const props = { open: true, query: 'เพลง', onClose: noop };
+      const props = { open: true, query: 'เพลง', onClose: noop, ...extraProps };
       await act(async () => { renderer = create(React.createElement(LyricsGoogleSearchModal, props),
         { createNodeMock: element => new Element(element.type.toUpperCase()) }); });
       await h.flush();
-      return async () => { await act(async () => renderer.update(React.createElement(LyricsGoogleSearchModal, { ...props, open: false }))); };
+      h.setModalOpen = async open => { await act(async () => renderer.update(React.createElement(LyricsGoogleSearchModal, { ...props, open }))); };
+      return () => h.setModalOpen(false);
     },
     async type(value) { await act(async () => renderer.root.findByProps({ role: 'combobox' }).props.onChange({ target: { value } })); },
     async key(key, overrides = {}) {
@@ -240,4 +243,72 @@ test('a closed lyrics portal no longer blocks later desktop kiosk focus', async 
   assert.equal(dialog.props['aria-hidden'], true);
   assert.equal(dialog.props['aria-modal'], false,
     'the mounted Google-results portal must stop advertising an active modal after closing');
+});
+
+test('the toolbar handle switches from search into the real queue and can close an empty queue without mobile focus', async t => {
+  const h = await environment(t, { playing: true });
+  const ref = React.createRef(); await h.mountOverlay({ ref });
+  h.mainInput.focus(); await h.type('สิ่งสำคัญ');
+  const focused = h.state.focus;
+  await act(async () => ref.current.toggleQueueBrowser()); await h.flush();
+  assert.equal(h.root.findByProps({ role: 'combobox' }).props.value, '');
+  assert.equal(h.root.findByProps({ id: 'player-queue-results' }).props.role, 'listbox');
+  assert.equal(h.state.focus, focused);
+  assert.notEqual(h.document.activeElement, h.mainInput);
+  await act(async () => h.root.findByProps({ 'aria-label': 'ปิดคิว' }).props.onClick()); await h.flush();
+  assert.equal(h.root.findAllByProps({ id: 'player-queue-results' }).length, 0);
+  h.context.queue = [];
+  await act(async () => ref.current.toggleQueueBrowser());
+  assert.equal(h.root.findByProps({ id: 'player-queue-results' }).findByProps({ 'aria-disabled': 'true' }).props.role, 'option');
+  await act(async () => ref.current.toggleQueueBrowser()); await h.flush();
+  assert.equal(h.state.focus, focused);
+});
+
+test('keyboard End uses the shared guarded page command and Space keeps native button activation', async t => {
+  const h = await environment(t, { mobile: false, playing: true });
+  let ended = 0;
+  await h.mountOverlay({ onEndCurrentSong: async () => { ended++; } }); await h.flush();
+  await h.key('End'); assert.equal(ended, 1); assert.equal(h.state.skipped, 0);
+  const button = new h.Element('BUTTON'); button.control = true; button.focus();
+  const focused = h.state.focus;
+  h.documentListeners.get('click')({ target: button }); await h.flush();
+  await h.key(' ', { target: button });
+  assert.equal(h.state.focus, focused);
+  assert.equal(h.document.activeElement, button);
+});
+
+test('lyrics results render inside the active fullscreen stage', async t => {
+  const h = await environment(t);
+  const fullscreenStage = new h.Element('DIV'); h.document.fullscreenElement = fullscreenStage;
+  await h.mountModal(h.mainInput, { portalRoot: fullscreenStage });
+  assert.equal(h.state.portalTarget, fullscreenStage);
+});
+
+test('an initialized lyrics widget keeps the same portal host across fullscreen entry and exit', async t => {
+  const h = await environment(t), stage = new h.Element('DIV');
+  let widget, executions = 0;
+  h.window.google = { search: { cse: { element: {
+    getElement: () => widget,
+    render: () => { widget = { execute: () => { executions++; } }; },
+  } } } };
+  const close = await h.mountModal(h.mainInput, { portalRoot: stage });
+  const script = h.root.find(node => String(node.props.src).startsWith('https://cse.google.com/cse.js'));
+  await act(async () => script.props.onReady()); await h.flush(); assert.equal(executions, 1);
+  await close(); h.document.fullscreenElement = stage; await h.setModalOpen(true); await h.flush();
+  h.document.fullscreenElement = null; await h.setModalOpen(true);
+  assert.equal(new Set(h.state.portalTargets).size, 1, 'changing portal host would recreate the Google results DOM');
+  assert.equal(h.state.portalTarget, stage);
+});
+
+test('the explicit queue command takes precedence over a running catalog download without cancelling it', async t => {
+  const h = await environment(t, { playing: true });
+  h.localCatalog.busy = 'downloading';
+  const ref = React.createRef(); await h.mountOverlay({ ref });
+  await act(async () => ref.current.toggleQueueBrowser());
+  assert.equal(h.root.findAllByProps({ id: 'player-queue-results' }).length, 1);
+  assert.equal(h.localCatalog.busy, 'downloading');
+  await act(async () => h.root.findByProps({ 'aria-label': 'ปิดคิว' }).props.onClick()); await h.flush();
+  assert.equal(h.root.findAllByProps({ id: 'player-queue-results' }).length, 0);
+  assert.equal(h.root.findByProps({ role: 'combobox' }).props['aria-expanded'], true, 'closing queue returns to the download view');
+  assert.equal(h.state.focus, 0);
 });

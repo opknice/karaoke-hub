@@ -1,11 +1,14 @@
 'use client';
 
 import {
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
+  type RefObject,
 } from 'react';
 import Image from 'next/image';
 import { Check, Gauge, ListMusic, Loader2, Music2, Search, Volume2, X } from 'lucide-react';
@@ -36,6 +39,7 @@ import { LyricsGoogleSearchModal } from './LyricsGoogleSearchModal';
 import { PlayerIdleWelcome, PlayerIdleKeyboardHeading, PlayerIdleKeyboardHints, PlayerIdleRoom } from './PlayerIdleGuide';
 import idleStyles from './PlayerIdleGuide.module.css';
 import enterPromptStyles from './PlayerSearchOverlay.module.css';
+import controlsStyles from './PlayerQuickControls.module.css';
 import type { TempoAdjustmentResult, TempoDirection } from './YouTubePlayer';
 
 type SearchStatus = 'idle' | 'loading' | 'success' | 'error';
@@ -43,10 +47,17 @@ type SearchStatus = 'idle' | 'loading' | 'success' | 'error';
 interface PlayerSearchOverlayProps {
   onQueueBrowserActiveChange: (isActive: boolean) => void;
   onRestartCurrentSong: () => void;
+  onEndCurrentSong?: () => Promise<void>;
+  onLyricsModalOpenChange?: (open: boolean) => void;
+  portalRootRef?: RefObject<HTMLElement | null>;
   onToggleVocalCut: () => void;
   onToggleAutoLevel: () => void;
   onAdjustTempo: (direction: TempoDirection) => TempoAdjustmentResult;
   onTempoShortcut: () => void;
+}
+
+export interface PlayerSearchOverlayHandle {
+  toggleQueueBrowser: () => void;
 }
 
 const MAX_VISIBLE_RESULTS = 25;
@@ -85,14 +96,17 @@ function getVideoThumbnailUrl(video: YouTubeVideo): string {
   }
 }
 
-export function PlayerSearchOverlay({
+export const PlayerSearchOverlay = forwardRef<PlayerSearchOverlayHandle, PlayerSearchOverlayProps>(function PlayerSearchOverlay({
   onQueueBrowserActiveChange,
   onRestartCurrentSong,
+  onEndCurrentSong,
+  onLyricsModalOpenChange,
+  portalRootRef,
   onToggleVocalCut,
   onToggleAutoLevel,
   onAdjustTempo,
   onTempoShortcut,
-}: PlayerSearchOverlayProps) {
+}, ref) {
   const {version: videoVersion, setVersion: setVideoVersion, desktop} = usePlayerSearchVersion();
   const videoVersionRef = useRef(videoVersion);
   const {
@@ -162,8 +176,8 @@ export function PlayerSearchOverlay({
   const catalogError = useCatalogPreview(query, videoVersion === 'karaoke' && localCatalog.initialized && status === 'idle' && localCatalog.mode === 'supabase', receivePreview);
 
   const trimmedQuery = query.trim();
-  const isOpen = isSearchExplicitlyOpen || query.length > 0 || showPopular || showLyricsInput || localCatalog.panelOpen || localCatalog.busy === 'downloading';
-  const isQueueBrowserActive = isQueueBrowserOpen && !isOpen;
+  const isOpen = !isQueueBrowserOpen && (isSearchExplicitlyOpen || query.length > 0 || showPopular || showLyricsInput || localCatalog.panelOpen || localCatalog.busy === 'downloading');
+  const isQueueBrowserActive = isQueueBrowserOpen;
   const isIdleGuideVisible = !nowPlaying && !isOpen && !isQueueBrowserActive;
   const isYoutubeSearchLoading = status === 'loading' && searchSource === 'youtube';
   const selectedQueueItem =
@@ -183,6 +197,10 @@ export function PlayerSearchOverlay({
   useEffect(() => {
     onQueueBrowserActiveChange(isQueueBrowserActive);
   }, [isQueueBrowserActive, onQueueBrowserActiveChange]);
+
+  useEffect(() => {
+    onLyricsModalOpenChange?.(isLyricsModalOpen);
+  }, [isLyricsModalOpen, onLyricsModalOpenChange]);
 
   const focusSearchInput = useCallback(() => {
     if (isVirtualKeyboardDevice()) return;
@@ -348,6 +366,17 @@ export function PlayerSearchOverlay({
     window.requestAnimationFrame(focusSearchInput);
   }, [focusSearchInput]);
 
+  const toggleQueueBrowser = useCallback(() => {
+    if (isQueueBrowserActive) {
+      closeQueueBrowser();
+    } else {
+      closeSearch();
+      openQueueBrowser('down');
+    }
+  }, [closeQueueBrowser, closeSearch, isQueueBrowserActive, openQueueBrowser]);
+
+  useImperativeHandle(ref, () => ({ toggleQueueBrowser }), [toggleQueueBrowser]);
+
   useEffect(() => {
     if (!isQueueBrowserOpen || !selectedQueueItem) return;
     document
@@ -430,7 +459,7 @@ export function PlayerSearchOverlay({
         && target !== inputRef.current
         && (
           target.isContentEditable
-          || target.closest('input, textarea, select, [role="textbox"], [data-player-lyrics-ui]')
+          || target.closest('input, textarea, select, [role="textbox"], [data-player-lyrics-ui], [data-player-controls]')
         )
       ) {
         return;
@@ -620,6 +649,7 @@ export function PlayerSearchOverlay({
       target !== inputRef.current
       && event.key.length === 1
       && !hasCommandModifier
+      && !(event.key === ' ' && target instanceof HTMLElement && target.closest('button, a, [role="button"]'))
     ) {
       // Focus synchronously so the browser delivers the key's text input to the
       // real field. This preserves Thai IME behavior without copying characters.
@@ -655,7 +685,7 @@ export function PlayerSearchOverlay({
 
       event.preventDefault();
       if (event.key === 'Home') onRestartCurrentSong();
-      else void skipSong().catch(console.warn);
+      else void (onEndCurrentSong ?? skipSong)().catch(console.warn);
       return;
     }
 
@@ -729,6 +759,7 @@ export function PlayerSearchOverlay({
     moveQueueSelection,
     nowPlaying,
     onRestartCurrentSong,
+    onEndCurrentSong,
     onAdjustTempo,
     onTempoShortcut,
     onToggleAutoLevel,
@@ -759,19 +790,19 @@ export function PlayerSearchOverlay({
           aria-controls="player-search-input"
           aria-expanded={false}
           onClick={() => setIsSearchExplicitlyOpen(true)}
-          className="fixed left-4 top-16 z-50 flex min-h-11 items-center gap-2 rounded-xl border border-violet-300/40 bg-zinc-950/90 px-4 py-2 text-sm font-semibold text-white shadow-lg hover:bg-violet-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
+          className={`${controlsStyles.openSearch} fixed z-50 flex min-h-11 items-center gap-2 rounded-xl border border-violet-300/40 bg-zinc-950/90 px-4 py-2 text-sm font-semibold text-white shadow-lg hover:bg-violet-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400`}
         >
           <Search className="h-4 w-4" aria-hidden="true" />
           ค้นหาเพลง
         </button>
       )}
-      {!desktop && <div className="absolute left-4 top-4 z-[60] flex gap-1 rounded-xl border border-white/15 bg-zinc-950/95 p-1" role="group" aria-label="ประเภทเพลง">
+      {!desktop && <div className={`${controlsStyles.versionSwitch} flex gap-1 rounded-xl border border-white/15 bg-zinc-950/95 p-1`} role="group" aria-label="ประเภทเพลง">
         {(['karaoke','mv'] as const).map(version => <button key={version} type="button" aria-pressed={videoVersion===version} onClick={()=>setVideoVersion(version)} className={`rounded-lg px-3 py-2 text-xs font-bold ${videoVersion===version?'bg-cyan-700 text-white':'text-zinc-300 hover:bg-white/10'}`}>{version==='mv'?'MV / เพลงปกติ':'Karaoke'}</button>)}
       </div>}
       <section
         className={
-          isIdleGuideVisible ? idleStyles.screen : isOpen
-            ? 'pointer-events-none fixed inset-0 z-50 bg-gradient-to-b from-black/85 via-black/45 to-transparent px-4 pt-[6vh] sm:px-8'
+          isIdleGuideVisible ? `${idleStyles.screen} ${controlsStyles.idleSearch}` : isOpen
+            ? `${controlsStyles.searchPanel} pointer-events-none fixed inset-0 z-50 bg-gradient-to-b from-black/85 via-black/45 to-transparent px-4 sm:px-8`
             : 'pointer-events-none fixed left-0 top-0 z-50 h-px w-px overflow-hidden opacity-0'
         }
         role="search"
@@ -1163,6 +1194,10 @@ export function PlayerSearchOverlay({
                   </p>
                 </div>
               </div>
+              <button type="button" aria-label="ปิดคิว" onClick={closeQueueBrowser}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-white/20 text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400">
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
               <span className="shrink-0 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-zinc-300">
                 {queue.length} เพลง
               </span>
@@ -1284,8 +1319,9 @@ export function PlayerSearchOverlay({
           open={isLyricsModalOpen}
           query={submittedLyricsQuery}
           onClose={closeLyricsModal}
+          portalRoot={portalRootRef?.current}
         />
       )}
     </>
   );
-}
+});

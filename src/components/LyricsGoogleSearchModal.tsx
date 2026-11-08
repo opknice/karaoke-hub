@@ -23,13 +23,14 @@ interface LyricsGoogleSearchModalProps {
   open: boolean;
   query: string;
   onClose: () => void;
+  portalRoot?: HTMLElement | null;
 }
 
 const SEARCH_ELEMENT_NAME = 'karaoke-lyrics-search';
 const SEARCH_CONTAINER_ID = 'karaoke-lyrics-google-results';
 const SEARCH_ENGINE_ID = process.env.NEXT_PUBLIC_GOOGLE_PSE_CX?.trim() || 'd5f533aac34ab447f';
 
-export function LyricsGoogleSearchModal({ open, query, onClose }: LyricsGoogleSearchModalProps) {
+export function LyricsGoogleSearchModal({ open, query, onClose, portalRoot }: LyricsGoogleSearchModalProps) {
   const [mounted, setMounted] = useState(false);
   const [scriptReady, setScriptReady] = useState(false);
   const [scriptError, setScriptError] = useState('');
@@ -114,7 +115,7 @@ export function LyricsGoogleSearchModal({ open, query, onClose }: LyricsGoogleSe
       aria-modal={open}
       aria-labelledby="lyrics-search-title"
       aria-hidden={!open}
-      className={`${open ? 'flex' : 'hidden'} fixed inset-0 z-[60] items-center justify-center bg-black/80 p-3 backdrop-blur-md sm:p-6`}
+      className={`${open ? 'flex' : 'hidden'} fixed inset-0 z-[80] items-center justify-center bg-black/80 p-3 backdrop-blur-md sm:p-6`}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -177,6 +178,6 @@ export function LyricsGoogleSearchModal({ open, query, onClose }: LyricsGoogleSe
         </div>
       </div>
     </div>,
-    document.body,
+    portalRoot ?? document.body,
   );
 }

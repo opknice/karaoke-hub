@@ -1,0 +1,88 @@
+.stage {
+  --player-safe-top: max(12px, env(safe-area-inset-top, 0px));
+  --player-safe-left: max(12px, env(safe-area-inset-left, 0px));
+  --player-safe-right: max(12px, env(safe-area-inset-right, 0px));
+  --player-controls-top: var(--player-safe-top);
+  --player-search-top: calc(var(--player-safe-top) + 68px);
+}
+
+.expanded {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100dvh;
+  z-index: 50;
+}
+
+.header {
+  position: absolute;
+  top: var(--player-controls-top);
+  right: var(--player-safe-right);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolbar {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid #ffffff29;
+  border-radius: 16px;
+  background: #09090bd9;
+  box-shadow: 0 4px 18px #0006;
+}
+
+.button {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  color: #e4e4e7;
+  touch-action: manipulation;
+}
+
+.button svg { width: 20px; height: 20px; }
+.button:hover:not(:disabled) { background: #ffffff1a; color: white; }
+.button:focus-visible { outline: 2px solid #c4b5fd; outline-offset: 2px; }
+.button:disabled { opacity: .35; cursor: not-allowed; }
+.button[aria-pressed='true'], .button[aria-expanded='true'] { color: #a5f3fc; background: #164e6380; }
+
+.versionSwitch {
+  position: absolute;
+  top: var(--player-safe-top, 12px);
+  left: var(--player-safe-left, 12px);
+  z-index: 60;
+}
+
+.searchPanel { padding-top: var(--player-search-top, 80px); }
+.stage .idleSearch { padding-top: var(--player-search-top); }
+.openSearch { top: var(--player-search-top, 80px); left: var(--player-safe-left, 12px); }
+.message {
+  position: absolute;
+  bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  right: var(--player-safe-right);
+  left: var(--player-safe-left);
+  z-index: 65;
+  width: fit-content;
+  max-width: calc(100% - 24px);
+  margin-left: auto;
+  border: 1px solid #ffffff29;
+  border-radius: 10px;
+  background: #09090bef;
+  padding: 8px 12px;
+  color: #e4e4e7;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+@media (max-width: 639px) {
+  .stage {
+    --player-controls-top: calc(var(--player-safe-top) + 52px);
+    --player-search-top: calc(var(--player-safe-top) + 116px);
+  }
+}

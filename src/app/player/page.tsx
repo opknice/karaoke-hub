@@ -1,8 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Maximize2, QrCode, X } from 'lucide-react';
-import { PlayerSearchOverlay } from '@/components/PlayerSearchOverlay';
+import { QrCode, X } from 'lucide-react';
+import { PlayerSearchOverlay, type PlayerSearchOverlayHandle } from '@/components/PlayerSearchOverlay';
+import { PlayerQuickControls } from '@/components/PlayerQuickControls';
+import controlsStyles from '@/components/PlayerQuickControls.module.css';
+import { usePlayerFullscreen } from '@/hooks/usePlayerFullscreen';
 import { PlayerQRGuideCard } from '@/components/PlayerQRGuideCard';
 import { PlayerVocalCutStatus } from '@/components/PlayerVocalCutStatus';
 import {
@@ -17,12 +20,12 @@ import { getVideoVersion } from '@/lib/video-version';
 import { getVocalPlaybackDelay,getContinuousVocalPlayback } from '@/lib/vocal-playback';
 
 export default function PlayerPage() {
-  const { activeRoom, ensureActiveRoom, nowPlaying, volume, isMuted, roomSyncError, refreshRoomQueue } = useKaraoke();
+  const { activeRoom, ensureActiveRoom, nowPlaying, volume, isMuted, roomSyncError, refreshRoomQueue, skipSong } = useKaraoke();
   const [isQueueBrowserActive, setIsQueueBrowserActive] = useState(false);
   const [showQRQuickModal, setShowQRQuickModal] = useState(false);
-  const [isMobileLandscape, setIsMobileLandscape] = useState(false);
-  const [isPageFullscreen, setIsPageFullscreen] = useState(false);
-  const [fullscreenError, setFullscreenError] = useState('');
+  const [lyricsModalOpen, setLyricsModalOpen] = useState(false);
+  const [endingSong, setEndingSong] = useState(false);
+  const [transportError, setTransportError] = useState('');
   const [normalizeFeedbackPhase, setNormalizeFeedbackPhase] = useState<'hidden' | 'visible' | 'fading'>('hidden');
   const [showTempoControl, setShowTempoControl] = useState(false);
   const [tempoControlSongId, setTempoControlSongId] = useState<string | null>(null);
@@ -31,7 +34,9 @@ export default function PlayerPage() {
   const [isRetryingRoom, setIsRetryingRoom] = useState(false);
   const playerRef = useRef<YouTubePlayerHandle>(null);
   const pageRef = useRef<HTMLDivElement>(null);
-  const ownsFullscreenRef = useRef(false);
+  const searchOverlayRef = useRef<PlayerSearchOverlayHandle>(null);
+  const endPendingRef = useRef(false);
+  const fullscreen = usePlayerFullscreen(pageRef);
   const normalizeFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const normalizeHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tempoControlHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -49,7 +54,24 @@ export default function PlayerPage() {
     && ['capturing_original', 'capturing_vocal_cut', 'unsupported_mono'].includes(vocalCut.state.captureStatus);
 
   const restartCurrentSong = useCallback(() => {
-    playerRef.current?.restartCurrentSong();
+    if (!nowPlaying || endPendingRef.current) return;
+    setTransportError('');
+    try { playerRef.current?.restartCurrentSong(); }
+    catch { setTransportError('เล่นซ้ำไม่สำเร็จ กรุณาลองอีกครั้ง'); }
+  }, [nowPlaying]);
+
+  const endCurrentSong = useCallback(async () => {
+    if (!nowPlaying || endPendingRef.current) return;
+    endPendingRef.current = true;
+    setEndingSong(true);
+    setTransportError('');
+    try { await skipSong(); }
+    catch { setTransportError('จบเพลงไม่สำเร็จ กรุณาลองอีกครั้ง'); }
+    finally { endPendingRef.current = false; setEndingSong(false); }
+  }, [nowPlaying, skipSong]);
+
+  const toggleQueueBrowser = useCallback(() => {
+    searchOverlayRef.current?.toggleQueueBrowser();
   }, []);
 
   const adjustTempo = useCallback((direction: TempoDirection): TempoAdjustmentResult => (
@@ -92,57 +114,6 @@ export default function PlayerPage() {
     if (tempoControlHideTimerRef.current) clearTimeout(tempoControlHideTimerRef.current);
   }, []);
 
-  useEffect(() => {
-    const landscapeMedia = window.matchMedia('(orientation: landscape) and (pointer: coarse)');
-
-    const syncOrientation = () => {
-      const isLandscape = landscapeMedia.matches;
-      setIsMobileLandscape(isLandscape);
-      if (!isLandscape) {
-        setFullscreenError('');
-        if (ownsFullscreenRef.current && document.fullscreenElement === pageRef.current) {
-          ownsFullscreenRef.current = false;
-          void document.exitFullscreen().catch(() => {
-            // The browser may already have left fullscreen during rotation.
-          });
-        }
-      }
-    };
-
-    const syncFullscreen = () => {
-      const isFullscreen = document.fullscreenElement === pageRef.current;
-      setIsPageFullscreen(isFullscreen);
-      if (!isFullscreen) ownsFullscreenRef.current = false;
-      setFullscreenError('');
-    };
-
-    syncOrientation();
-    syncFullscreen();
-    landscapeMedia.addEventListener('change', syncOrientation);
-    document.addEventListener('fullscreenchange', syncFullscreen);
-    return () => {
-      landscapeMedia.removeEventListener('change', syncOrientation);
-      document.removeEventListener('fullscreenchange', syncFullscreen);
-    };
-  }, []);
-
-  const enterPageFullscreen = useCallback(async () => {
-    const page = pageRef.current;
-    if (!page?.requestFullscreen || !document.fullscreenEnabled) {
-      setFullscreenError('เบราว์เซอร์นี้ไม่รองรับการแสดงเต็มจอ');
-      return;
-    }
-
-    setFullscreenError('');
-    ownsFullscreenRef.current = true;
-    try {
-      await page.requestFullscreen();
-    } catch {
-      ownsFullscreenRef.current = false;
-      setFullscreenError('ไม่สามารถเปิดเต็มจอได้ กรุณาแตะลองอีกครั้ง');
-    }
-  }, []);
-
   const initializeRoom = useCallback(async () => {
     setIsRetryingRoom(true);
     setRoomSetupError('');
@@ -170,7 +141,8 @@ export default function PlayerPage() {
   }, []);
 
   return (
-    <div ref={pageRef} className="relative flex h-dvh w-full flex-col overflow-hidden bg-black xl:flex-row">
+    <div ref={pageRef} data-player-stage data-stage-mode={fullscreen.mode}
+      className={`${controlsStyles.stage} ${fullscreen.mode === 'expanded' ? controlsStyles.expanded : ''} relative flex h-dvh w-full flex-col overflow-hidden bg-black xl:flex-row`}>
       <PlayerVocalCutStatus
         state={vocalCut.state}
         notice={vocalCut.notice}
@@ -212,55 +184,30 @@ export default function PlayerPage() {
         </div>
       )}
 
-      {isMobileLandscape && !isPageFullscreen && !isQueueBrowserActive && !showQRQuickModal && (
-        <div className="pointer-events-none absolute inset-x-3 bottom-3 z-40 flex justify-center">
-          <div className="pointer-events-auto flex max-w-full flex-col items-center gap-1 rounded-2xl border border-white/15 bg-zinc-950/85 px-3 py-2 text-center text-white shadow-2xl backdrop-blur-md">
-            <button
-              type="button"
-              onClick={() => void enterPageFullscreen()}
-              className="flex items-center gap-2 rounded-lg px-2 py-1 text-sm font-semibold transition hover:text-violet-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
-            >
-              <Maximize2 className="h-4 w-4" aria-hidden="true" />
-              แตะเพื่อดูเวทีเต็มจอ
-            </button>
-            {fullscreenError && <span role="alert" className="text-xs text-rose-200">{fullscreenError}</span>}
-          </div>
-        </div>
-      )}
-
-      {/* Ambient QR Badge on Idle */}
-      {activeRoom && (
-        <div className="absolute right-4 top-4 z-30 flex items-center gap-2">
-          {nowPlaying && !isQueueBrowserActive && !showQRQuickModal && (
-            <div
-              aria-label="คีย์ลัด: Home เล่นซ้ำ, End จบเพลง, ลูกศรขึ้นลงดูเพลงในคิว, F11 เต็มจอหรือลดจอ"
-              className="hidden items-center gap-1.5 rounded-full border border-white/10 bg-zinc-950/75 px-3 py-2 text-[11px] text-zinc-300 shadow-xl backdrop-blur-md sm:flex"
-            >
-              <kbd className="font-mono font-semibold text-zinc-100">Home</kbd>
-              <span>เล่นซ้ำ</span>
-              <span aria-hidden="true" className="text-zinc-600">•</span>
-              <kbd className="font-mono font-semibold text-zinc-100">End</kbd>
-              <span>จบเพลง</span>
-              <span aria-hidden="true" className="text-zinc-600">•</span>
-              <kbd className="font-mono font-semibold text-zinc-100">↑↓</kbd>
-              <span>ดูเพลงในคิว</span>
-              <span aria-hidden="true" className="text-zinc-600">•</span>
-              <kbd className="font-mono font-semibold text-zinc-100">F11</kbd>
-              <span>เต็มจอ/ลดจอ</span>
-            </div>
-          )}
-          <button
+      {!showQRQuickModal && !lyricsModalOpen && (
+        <div className={controlsStyles.header} data-player-controls>
+          <PlayerQuickControls hasSong={Boolean(nowPlaying)} endingSong={endingSong} queueOpen={isQueueBrowserActive}
+            fullscreenActive={fullscreen.active} fullscreenPending={fullscreen.pending} fullscreenLabel={fullscreen.label}
+            onRestart={restartCurrentSong} onEnd={() => void endCurrentSong()} onToggleQueue={toggleQueueBrowser}
+            onToggleFullscreen={() => void fullscreen.toggle()} />
+          {activeRoom && <button
             type="button"
             onClick={() => setShowQRQuickModal((prev) => !prev)}
             aria-label={`แสดง QR Code ห้อง ${activeRoom.room_code}`}
-            className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-zinc-950/80 text-zinc-200 shadow-xl backdrop-blur-md transition hover:border-violet-400/50 hover:bg-zinc-900/90 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
+            className="flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-zinc-950/80 text-zinc-200 shadow-xl backdrop-blur-md transition hover:border-violet-400/50 hover:bg-zinc-900/90 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
             title="คลิกเพื่อดู QR Code สแกนขอเพลงจากมือถือ"
           >
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-violet-600/40 text-violet-300">
               <QrCode className="h-3.5 w-3.5" aria-hidden="true" />
             </span>
-          </button>
+          </button>}
         </div>
+      )}
+
+      {!showQRQuickModal && !lyricsModalOpen && (transportError || fullscreen.error || fullscreen.notice) && (
+        <p role={transportError || fullscreen.error ? 'alert' : 'status'} className={controlsStyles.message}>
+          {transportError || fullscreen.error || fullscreen.notice}
+        </p>
       )}
 
       {/* Quick QR Modal when clicking the ambient badge */}
@@ -269,7 +216,7 @@ export default function PlayerPage() {
           role="dialog"
           aria-modal="true"
           aria-label="QR Code สำหรับขอเพลงจากมือถือ"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md animate-in fade-in duration-200"
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/80 p-4 backdrop-blur-md animate-in fade-in duration-200"
           onClick={() => setShowQRQuickModal(false)}
         >
           <div
@@ -318,8 +265,12 @@ export default function PlayerPage() {
         </div>
       </div>
       <PlayerSearchOverlay
+        ref={searchOverlayRef}
+        portalRootRef={pageRef}
         onQueueBrowserActiveChange={setIsQueueBrowserActive}
         onRestartCurrentSong={restartCurrentSong}
+        onEndCurrentSong={endCurrentSong}
+        onLyricsModalOpenChange={setLyricsModalOpen}
         onToggleVocalCut={vocalCut.toggle}
         onToggleAutoLevel={toggleNormalizeWithFeedback}
         onAdjustTempo={adjustTempo}
