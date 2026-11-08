@@ -793,7 +793,7 @@ export const PlayerSearchOverlay = forwardRef<PlayerSearchOverlayHandle, PlayerS
           className={`${controlsStyles.openSearch} fixed z-50 flex min-h-11 items-center gap-2 rounded-xl border border-violet-300/40 bg-zinc-950/90 px-4 py-2 text-sm font-semibold text-white shadow-lg hover:bg-violet-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400`}
         >
           <Search className="h-4 w-4" aria-hidden="true" />
-          ค้นหาเพลง
+          <span className={controlsStyles.searchLabel}>ค้นหาเพลง</span>
         </button>
       )}
       <section
