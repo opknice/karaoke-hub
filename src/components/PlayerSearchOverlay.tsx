@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type RefObject,
 } from 'react';
 import Image from 'next/image';
@@ -21,6 +22,7 @@ import type { YouTubeVideo } from '@/lib/types';
 import { searchPlayerKaraoke, getLocalSearchPreview, getPopularKaraokeVideos, isDirectVideoQuery, previewCatalog } from '@/lib/youtube-search-client';
 import { useLocalCatalog } from '@/lib/use-local-catalog';
 import { isYouTubeVideo } from '@/lib/youtube-video-validation';
+import { useYouTubeSuggestions } from '@/hooks/useYouTubeSuggestions';
 import { OfficialChannelBadge } from './OfficialChannelBadge';
 import { useCatalogPreview } from '@/lib/use-catalog-preview';
 import {
@@ -63,6 +65,21 @@ export interface PlayerSearchOverlayHandle {
 const MAX_VISIBLE_RESULTS = 25;
 const MIN_SEARCH_LENGTH = 2;
 const SUCCESS_MESSAGE_MS = 1800;
+const WIDE_SUGGESTION_LAYOUT_QUERY = '(min-width: 960px)';
+
+function subscribeToWideSuggestionLayout(onChange: () => void): () => void {
+  const mediaQuery = window.matchMedia(WIDE_SUGGESTION_LAYOUT_QUERY);
+  mediaQuery.addEventListener('change', onChange);
+  return () => mediaQuery.removeEventListener('change', onChange);
+}
+
+function getWideSuggestionLayoutSnapshot(): boolean {
+  return window.matchMedia(WIDE_SUGGESTION_LAYOUT_QUERY).matches;
+}
+
+function getWideSuggestionLayoutServerSnapshot(): boolean {
+  return false;
+}
 
 const viewCountFormatter = new Intl.NumberFormat('th-TH', {
   notation: 'compact',
@@ -122,6 +139,11 @@ export const PlayerSearchOverlay = forwardRef<PlayerSearchOverlayHandle, PlayerS
     volume,
   } = useKaraoke();
   const { nickname } = useAuth();
+  const isWideSuggestionLayout = useSyncExternalStore(
+    subscribeToWideSuggestionLayout,
+    getWideSuggestionLayoutSnapshot,
+    getWideSuggestionLayoutServerSnapshot,
+  );
   const inputRef = useRef<HTMLInputElement>(null);
   const lyricsInputRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef<AbortController | null>(null);
@@ -130,6 +152,7 @@ export const PlayerSearchOverlay = forwardRef<PlayerSearchOverlayHandle, PlayerS
   const tempoFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const addingVideoRef = useRef(false);
   const queryRef = useRef('');
+  const pendingSuggestionSearchRef = useRef<string | null>(null);
   const catalogModeRef = useRef<'supabase' | 'local'>('supabase');
   const searchModeRef = useRef<YouTubeSearchMode>('song');
   const lyricsUiActiveRef = useRef(false);
@@ -177,6 +200,11 @@ export const PlayerSearchOverlay = forwardRef<PlayerSearchOverlayHandle, PlayerS
 
   const trimmedQuery = query.trim();
   const isOpen = !isQueueBrowserOpen && (isSearchExplicitlyOpen || query.length > 0 || showPopular || showLyricsInput || localCatalog.panelOpen || localCatalog.busy === 'downloading');
+  const { suggestions: youtubeSuggestions, isLoading: youtubeSuggestionsLoading } = useYouTubeSuggestions(
+    trimmedQuery,
+    isOpen && !isDirectVideoQuery(trimmedQuery),
+  );
+  const hasYoutubeSuggestions = isOpen && (youtubeSuggestionsLoading || youtubeSuggestions.length > 0);
   const isQueueBrowserActive = isQueueBrowserOpen;
   const isIdleGuideVisible = !nowPlaying && !isOpen && !isQueueBrowserActive;
   const isYoutubeSearchLoading = status === 'loading' && searchSource === 'youtube';
@@ -215,6 +243,7 @@ export const PlayerSearchOverlay = forwardRef<PlayerSearchOverlayHandle, PlayerS
       lyricsInputRef.current?.blur();
     }
     queryRef.current = '';
+    pendingSuggestionSearchRef.current = null;
     setQuery('');
     setIsSearchExplicitlyOpen(false);
     setShowPopular(false);
@@ -260,6 +289,9 @@ export const PlayerSearchOverlay = forwardRef<PlayerSearchOverlayHandle, PlayerS
     // Android IMEs can commit unchanged text as focus moves to a result.
     // Keep that result mounted until its click is delivered.
     if (value === queryRef.current) return;
+    if (pendingSuggestionSearchRef.current && value.trim() !== pendingSuggestionSearchRef.current) {
+      pendingSuggestionSearchRef.current = null;
+    }
     requestRef.current?.abort();
     setShowPopular(false);
     queryRef.current = value;
@@ -481,10 +513,10 @@ export const PlayerSearchOverlay = forwardRef<PlayerSearchOverlayHandle, PlayerS
     };
   }, [focusSearchInput]);
 
-  const submitSearch = useCallback(async (source: 'catalog' | 'youtube' = 'catalog') => {
+  const submitSearch = useCallback(async (source: 'catalog' | 'youtube' = 'catalog', queryOverride?: string) => {
     if (videoVersion === 'mv') source = 'youtube';
     if (requestRef.current && !requestRef.current.signal.aborted) return;
-    const normalizedQuery = query.trim();
+    const normalizedQuery = (queryOverride ?? query).trim();
 
     if (normalizedQuery.length < MIN_SEARCH_LENGTH) return;
 
@@ -547,6 +579,15 @@ export const PlayerSearchOverlay = forwardRef<PlayerSearchOverlayHandle, PlayerS
       }
     }
   }, [query, localCatalog.mode, localCatalog.ready, cancelLocalSearch, localResultsActive, rawResults.length, videoVersion]);
+
+  useEffect(() => {
+    const pendingQuery = pendingSuggestionSearchRef.current;
+    if (!pendingQuery || pendingQuery !== trimmedQuery) return;
+    if (videoVersion !== 'mv' && !catalogSearchSettled && !catalogError) return;
+
+    pendingSuggestionSearchRef.current = null;
+    if (results.length === 0) void submitSearch('youtube', pendingQuery);
+  }, [catalogError, catalogSearchSettled, results.length, submitSearch, trimmedQuery, videoVersion]);
 
   useEffect(() => {
     if (videoVersionRef.current === videoVersion) return;
@@ -845,7 +886,7 @@ export const PlayerSearchOverlay = forwardRef<PlayerSearchOverlayHandle, PlayerS
                 aria-autocomplete="list"
                 aria-expanded={isOpen || isQueueBrowserActive}
                 aria-haspopup="listbox"
-                aria-controls={isQueueBrowserActive ? 'player-queue-results' : 'player-search-results'}
+                aria-controls={isQueueBrowserActive ? 'player-queue-results' : hasYoutubeSuggestions ? 'player-youtube-suggestions player-search-results' : 'player-search-results'}
                 aria-activedescendant={activeDescendantId}
               />
               {query.length > 0 && (
@@ -1011,10 +1052,20 @@ export const PlayerSearchOverlay = forwardRef<PlayerSearchOverlayHandle, PlayerS
           {localCatalog.mode === 'supabase' && catalogError && <p role="status" className="mt-2 text-xs text-amber-200">{catalogError}</p>}
 
           {isOpen && (
-            <div className="mt-3 grid grid-cols-1 items-start gap-4 lg:grid-cols-12">
+            <div
+              className="mt-3"
+              style={{
+                display: 'grid',
+                gridTemplateColumns: hasYoutubeSuggestions && isWideSuggestionLayout
+                  ? 'minmax(0, 2fr) minmax(18rem, 1fr)'
+                  : 'minmax(0, 1fr)',
+                alignItems: 'start',
+                gap: '1rem',
+              }}
+            >
               <div
                 id="player-search-results"
-                className="max-h-[calc(100dvh-18rem)] overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-zinc-950/95 shadow-2xl backdrop-blur-xl lg:col-span-8"
+                className="min-w-0 max-h-[calc(100dvh-18rem)] overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-zinc-950/95 shadow-2xl backdrop-blur-xl"
                 role="listbox"
                 aria-label="ผลการค้นหาเพลง"
               >
@@ -1153,6 +1204,48 @@ export const PlayerSearchOverlay = forwardRef<PlayerSearchOverlayHandle, PlayerS
                 );
               })}
             </div>
+
+            {hasYoutubeSuggestions && (
+              <aside className="min-w-0" aria-label="คำแนะนำจาก YouTube">
+                <div
+                  id="player-youtube-suggestions"
+                  className="max-h-[calc(100dvh-18rem)] min-h-0 overflow-y-auto rounded-2xl border border-white/10 bg-zinc-950/95 shadow-2xl backdrop-blur-xl"
+                  role="listbox"
+                  aria-label="คำแนะนำจาก YouTube"
+                >
+                  <p className="border-b border-white/10 px-3 py-3 text-xs font-semibold text-zinc-400">
+                    คำแนะนำจาก YouTube
+                  </p>
+                  {youtubeSuggestionsLoading && youtubeSuggestions.length === 0 ? (
+                    <p className="px-3 py-3 text-sm text-zinc-500" role="status">กำลังโหลดคำแนะนำ…</p>
+                  ) : youtubeSuggestions.map((suggestion, index) => (
+                    <button
+                      key={`${suggestion}-${index}`}
+                      id={`player-youtube-suggestion-${index}`}
+                      type="button"
+                      role="option"
+                      aria-selected="false"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        const isSameQuery = suggestion === trimmedQuery;
+                        const shouldSearchYouTubeImmediately = videoVersion === 'mv' || results.length === 0;
+                        pendingSuggestionSearchRef.current = suggestion;
+                        updateQuery(suggestion);
+                        inputRef.current?.focus({ preventScroll: true });
+                        if (shouldSearchYouTubeImmediately || isSameQuery) {
+                          pendingSuggestionSearchRef.current = null;
+                          if (shouldSearchYouTubeImmediately) void submitSearch('youtube', suggestion);
+                        }
+                      }}
+                      className="flex w-full items-center gap-2 border-b border-white/5 px-3 py-3 text-left text-sm text-zinc-200 last:border-b-0 hover:bg-white/5 focus-visible:bg-white/10 focus-visible:outline-none"
+                    >
+                      <Search className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />
+                      <span className="min-w-0 flex-1 truncate">{suggestion}</span>
+                    </button>
+                  ))}
+                </div>
+              </aside>
+            )}
 
           </div>
           )}
